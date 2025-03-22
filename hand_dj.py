@@ -9,7 +9,7 @@ import logging
 from pyo import *
 
 # Import specific pyo modules for better clarity
-from pyo import Server, SndTable, TableRead, Sine, SfPlayer, Harmonizer, STRev, Mix
+from pyo import Server, SndTable, TableRead, Sine, SfPlayer, Harmonizer, STRev, Mix, SigTo
 
 # Disable TensorFlow logging
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=DEBUG, 1=INFO, 2=WARNING, 3=ERROR
@@ -55,6 +55,9 @@ class HandDJ:
         self.pitch = 0          # Default pitch shift (0 = no shift)
         self.volume = 0.5       # Default volume (0.5 = 50%)
         
+        # Global variable for PYO to control SfPlayer
+        self.g_speed = SigTo(1.0, time=0.1)
+        
         # Smoothing parameters for gesture control
         self.speed_history = [1.0] * 5
         self.pitch_history = [0] * 5
@@ -87,7 +90,12 @@ class HandDJ:
             # Method 1: Try SfPlayer with high quality settings (good for MP3)
             print(f"Method 1: Trying SfPlayer with {self.audio_path}")
             try:
-                self.player = SfPlayer(self.audio_path, loop=True, mul=0.8, interp=4)
+                # Create a global speed control variable
+                self.g_speed = SigTo(1.0, time=0.1, init=1.0)
+                
+                # Use the global speed control for SfPlayer
+                self.player = SfPlayer(self.audio_path, speed=self.g_speed, loop=True, mul=0.8, interp=4)
+                
                 # Create a Harmonizer for pitch shifting
                 self.pitch_shifter = Harmonizer(self.player, transpo=0, mul=0.8)
                 # Add a high quality reverb for better sound
@@ -163,10 +171,11 @@ class HandDJ:
             if self.audio_path is None:
                 # For sine wave with harmonics
                 # Calculate frequency using exponential formula for more natural pitch changes
-                base_freq = 440  # A4 note
-                semitone_ratio = 2 ** (1/12)  # Ratio between adjacent semitones
-                adjusted_pitch = float(self.pitch)  # Current pitch in semitones
-                new_freq = base_freq * (semitone_ratio ** adjusted_pitch)
+                # Map pitch to frequency range 60-600Hz
+                base_freq = 60  # Minimum frequency
+                max_freq = 600  # Maximum frequency
+                normalized_pitch = (self.pitch + 12) / 24.0  # Normalize pitch to 0-1 range
+                new_freq = base_freq + normalized_pitch * (max_freq - base_freq)
                 
                 # Update sine wave and harmonics
                 self.sine.freq = new_freq
@@ -193,16 +202,20 @@ class HandDJ:
                 
                 # For SfPlayer (MP3 files)
                 if hasattr(self, 'player') and isinstance(self.player, SfPlayer):
-                    # Update the speed ratio - SfPlayer needs special handling
-                    if abs(speed - 1.0) > 0.05:  # Only modify if speed is significantly different from 1.0
-                        # We need to recreate the player with the new speed
-                        # Store current position to maintain continuity
-                        try:
-                            self.player.mul = volume
-                            if hasattr(self, 'pitch_shifter'):
-                                self.pitch_shifter.transpo = pitch
-                        except Exception as e:
-                            print(f"SfPlayer update error: {e}")
+                    # Update the speed ratio using the global speed control
+                    try:
+                        # Update the global speed control variable
+                        if hasattr(self, 'g_speed'):
+                            self.g_speed.value = speed
+                        
+                        self.player.mul = volume
+                        if hasattr(self, 'pitch_shifter'):
+                            # Map pitch to frequency range 60-600Hz
+                            normalized_pitch = (pitch + 12) / 24.0  # Normalize to 0-1
+                            transpo_value = (normalized_pitch * 2 - 1) * 12  # Map to semitone range
+                            self.pitch_shifter.transpo = transpo_value
+                    except Exception as e:
+                        print(f"SfPlayer update error: {e}")
                 
                 # For TableRead with SndTable (WAV and other formats)
                 if hasattr(self, 'player') and hasattr(self, 'table'):
@@ -215,7 +228,10 @@ class HandDJ:
                             
                             # Make sure these changes are reflected in the output
                             if hasattr(self, 'pitch_shifter'):
-                                self.pitch_shifter.transpo = pitch
+                                # Map pitch to frequency range 60-600Hz
+                                normalized_pitch = (pitch + 12) / 24.0  # Normalize to 0-1
+                                transpo_value = (normalized_pitch * 2 - 1) * 12  # Map to semitone range
+                                self.pitch_shifter.transpo = transpo_value
                                 self.pitch_shifter.mul = volume
                         except Exception as e:
                             print(f"TableRead update error: {e}")
@@ -264,16 +280,16 @@ class HandDJ:
             # Adjust mapping to make medium pinch = normal speed (1.0x)
             # Closer pinch (< medium) slows down, wider pinch (> medium) speeds up
             if left_pinch_dist < pinch_medium:
-                # Map [pinch_min, pinch_medium] to [0.25, 1.0]
+                # Map [pinch_min, pinch_medium] to [0.1, 1.0]
                 normalized_pinch = (left_pinch_dist - pinch_min) / (pinch_medium - pinch_min)
-                raw_speed = 0.25 + normalized_pinch * 0.75  # Map to [0.25, 1.0]
+                raw_speed = 0.1 + normalized_pinch * 0.9  # Map to [0.1, 1.0]
             else:
-                # Map [pinch_medium, pinch_max] to [1.0, 3.0]
+                # Map [pinch_medium, pinch_max] to [1.0, 2.0]
                 normalized_pinch = (left_pinch_dist - pinch_medium) / (pinch_max - pinch_medium)
-                raw_speed = 1.0 + normalized_pinch * 2.0  # Map to [1.0, 3.0]
+                raw_speed = 1.0 + normalized_pinch * 1.0  # Map to [1.0, 2.0]
             
-            # Clamp between 0.25x and 3.0x
-            raw_speed = max(0.25, min(3.0, raw_speed))
+            # Clamp between 0.1x and 2.0x
+            raw_speed = max(0.1, min(2.0, raw_speed))
             
             # Apply smoothing
             self.speed = self.smooth_value(raw_speed, self.speed_history)
@@ -408,10 +424,10 @@ class HandDJ:
                         handedness = results.multi_handedness[hand_idx].classification[0].label
                         
                         # Store landmarks for specific hand
-                        if handedness == 'Left':  # This is actually right hand due to mirroring
-                            right_hand_landmarks = hand_landmarks
-                        elif handedness == 'Right':  # This is actually left hand due to mirroring
+                        if handedness == 'Left':  # Camera is mirrored, so this is the actual LEFT hand
                             left_hand_landmarks = hand_landmarks
+                        elif handedness == 'Right':  # Camera is mirrored, so this is the actual RIGHT hand
+                            right_hand_landmarks = hand_landmarks
                         
                         # Draw the landmarks
                         self.mp_drawing.draw_landmarks(
@@ -431,8 +447,8 @@ class HandDJ:
                         index_pos = (int(index_tip.x * w), int(index_tip.y * h))
                         
                         # Different colors for different hands
-                        color = (0, 255, 0) if handedness == 'Left' else (0, 0, 255)
-                        label = "RIGHT HAND (PITCH)" if handedness == 'Left' else "LEFT HAND (SPEED)"
+                        color = (0, 0, 255) if handedness == 'Left' else (0, 255, 0)
+                        label = "LEFT HAND (SPEED)" if handedness == 'Left' else "RIGHT HAND (PITCH)"
                         
                         # Draw parameter label above hand
                         cv2.putText(image, label, 
