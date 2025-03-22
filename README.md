@@ -106,16 +106,8 @@ If you encounter issues:
 3. Convert MP3 files to WAV format for better compatibility
 4. Ensure you have good lighting for better tracking
 
-## License
-
-[Specify your license here]
-
 ## Acknowledgments
 
 - Built with [MediaPipe](https://mediapipe.dev/)
 - Audio processing using [pyo](http://ajaxsoundstudio.com/software/pyo/)
 - Computer vision with [OpenCV](https://opencv.org/)
-
----
-
-Developed by [Your Name] - [Year] 
