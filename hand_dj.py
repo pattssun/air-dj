@@ -164,8 +164,8 @@ class HandDJ:
     def load_calibration(self):
         """Load calibration data from file if it exists"""
         calibration = {
-            "pinch_min": 0.01,
-            "pinch_max": 0.06,  # Reduced from 0.1 to make controls more sensitive
+            "pinch_min": 0.0,  # Set to exactly 0 for accurate min mapping
+            "pinch_max": 0.400,  # Set to exactly 0.400 as specified
             "distance_min": 0.1,
             "distance_max": 0.7
         }
@@ -179,6 +179,10 @@ class HandDJ:
         except Exception as e:
             print(f"Error loading calibration data: {e}")
             print("Using default calibration values")
+            
+        # Force pinch min and max to requested values regardless of loaded data
+        calibration["pinch_min"] = 0.0  # Ensure exact 0 for pinch min
+        calibration["pinch_max"] = 0.400  # Ensure exact 0.400 for pinch max
         
         return calibration
     
@@ -188,8 +192,8 @@ class HandDJ:
             if self.audio_path is None:
                 # For sine wave with harmonics
                 # Calculate frequency using exponential formula for more natural pitch changes
-                # Map pitch to frequency range 60-600Hz
-                base_freq = 60  # Minimum frequency
+                # Map pitch to frequency range 20-600Hz
+                base_freq = 20  # Minimum frequency (changed from 60Hz to 20Hz)
                 max_freq = 600  # Maximum frequency
                 normalized_pitch = (self.pitch + 12) / 24.0  # Normalize pitch to 0-1 range
                 new_freq = base_freq + normalized_pitch * (max_freq - base_freq)
@@ -197,7 +201,6 @@ class HandDJ:
                 # Apply speed factor to the frequency
                 # Speed affects the perceived pitch in sine wave synthesis
                 speed_adjusted_freq = new_freq * self.speed
-                print(f"DEBUG - Sine wave: base freq={new_freq:.1f}Hz, speed adjusted={speed_adjusted_freq:.1f}Hz")
                 
                 # Update sine wave and harmonics with smooth transitions
                 if hasattr(self, 'freq_sig'):
@@ -231,14 +234,10 @@ class HandDJ:
                 pitch = float(self.pitch)
                 volume = float(self.volume)
                 
-                print(f"DEBUG - Speed: {speed:.2f}x, Pitch: {pitch:.1f}, Volume: {volume:.2f}")
-                
                 # For SfPlayer (MP3 files)
                 if hasattr(self, 'player') and isinstance(self.player, SfPlayer):
                     # Update the speed ratio using direct methods
                     try:
-                        print(f"DEBUG - Setting SfPlayer speed to {speed:.2f}x")
-                        
                         success = False
                         
                         # Method 1: SfPlayer has a direct setSpeed method we can use to control playback speed
@@ -246,11 +245,8 @@ class HandDJ:
                         try:
                             # Call the direct method to control playback speed
                             self.player.setSpeed(speed)
-                            print(f"Successfully set SfPlayer speed using setSpeed method")
                             success = True
                         except Exception as e:
-                            print(f"setSpeed method failed: {e}")
-                            
                             # Alternative method: try manipulating the internal _base_objs
                             try:
                                 # Directly update the playback speed through base objects
@@ -258,15 +254,13 @@ class HandDJ:
                                     for obj in self.player._base_objs:
                                         if hasattr(obj, 'setSpeed'):
                                             obj.setSpeed(speed)
-                                    print(f"Set speed using _base_objs approach")
                                     success = True
                             except Exception as e:
-                                print(f"Base objects approach failed: {e}")
+                                pass
                         
                         # Final fallback: recreate the player with new speed if critical
                         if not success and abs(speed - 1.0) > 0.1:
                             try:
-                                print("Trying extreme fallback: recreating player with new speed")
                                 # Get current position if possible
                                 current_pos = 0
                                 if hasattr(self.player, 'pos'):
@@ -302,17 +296,16 @@ class HandDJ:
                                 
                                 # Stop the old player
                                 old_player.stop()
-                                print("Recreated SfPlayer with new speed")
                                 success = True
                             except Exception as e:
-                                print(f"Player recreation failed: {e}")
+                                pass
                         
                         # Force audio processing to update
                         self.server.process()
                         
                         self.player.mul = volume
                         if hasattr(self, 'pitch_shifter'):
-                            # Map pitch to frequency range 60-600Hz
+                            # Map pitch to frequency range 20-600Hz
                             normalized_pitch = (pitch + 12) / 24.0  # Normalize to 0-1
                             transpo_value = (normalized_pitch * 2 - 1) * 12  # Map to semitone range
                             self.pitch_shifter.transpo = transpo_value
@@ -329,23 +322,20 @@ class HandDJ:
                             base_rate = self.table.getRate()
                             
                         new_rate = base_rate * speed
-                        print(f"DEBUG - Base rate: {base_rate}, New rate: {new_rate:.2f}")
                         
                         # Update rate control variable
                         if hasattr(self, 'g_rate'):
-                            print(f"DEBUG - Setting TableRead rate to {new_rate:.2f}")
                             self.g_rate.value = new_rate
                         else:
                             # Fallback for direct frequency setting
                             self.player.freq = new_rate
-                            print(f"DEBUG - Set TableRead freq directly to {new_rate:.2f}")
                         
                         # Force audio processing to update
                         self.server.process()
                         
                         # Make sure these changes are reflected in the output
                         if hasattr(self, 'pitch_shifter'):
-                            # Map pitch to frequency range 60-600Hz
+                            # Map pitch to frequency range 20-600Hz
                             normalized_pitch = (pitch + 12) / 24.0  # Normalize to 0-1
                             transpo_value = (normalized_pitch * 2 - 1) * 12  # Map to semitone range
                             self.pitch_shifter.transpo = transpo_value
@@ -366,6 +356,51 @@ class HandDJ:
         except Exception as e:
             print(f"Error updating audio: {e}")
     
+    def reset_parameters(self):
+        """Reset all audio parameters to their default values"""
+        # Store previous values for logging
+        prev_speed = self.speed
+        prev_pitch = self.pitch
+        prev_vol = self.volume
+        
+        # Reset to defaults
+        self.speed = 1.0
+        self.pitch = 0.0
+        self.volume = 0.5
+        
+        # Reset the smoothing history
+        self.speed_history = [1.0] * len(self.speed_history)
+        self.pitch_history = [0.0] * len(self.pitch_history)
+        self.volume_history = [0.5] * len(self.volume_history)
+        
+        # Update audio immediately
+        self.update_audio_params()
+        
+        # Log the reset
+        print(f"✓ RESET: Speed: 1.0x | Pitch: {int(330)}Hz | Volume: 0.5x")
+        
+        # Print current parameters to maintain consistent format
+        self.log_parameters()
+    
+    def log_parameters(self):
+        """Log current parameter values in a single line format"""
+        # Calculate frequency from pitch
+        base_freq = 20  # Changed from 60Hz to 20Hz
+        max_freq = 600
+        normalized_pitch = (self.pitch + 12) / 24.0
+        frequency = int(base_freq + normalized_pitch * (max_freq - base_freq))
+        
+        # Format output with all parameters on one line
+        print(f"LEVELS | Speed: {self.speed:.1f}x | Pitch: {frequency}Hz | Volume: {self.volume:.1f}x")
+    
+    def log_pinch_debug(self, hand, pinch_dist, mapped_value):
+        """Log detailed debug information about pinch distances and mappings"""
+        control_type = "Speed" if hand == "left" else "Pitch"
+        value_str = f"{mapped_value:.1f}x" if hand == "left" else f"{mapped_value}Hz"
+        normalized = pinch_dist / self.calibration["pinch_max"]
+        
+        print(f"DEBUG | {hand.upper()} pinch: {pinch_dist:.3f} | Normalized: {normalized:.2f} | {control_type}: {value_str}")
+    
     def smooth_value(self, new_value, history_list):
         """Apply smoothing to reduce jitter"""
         history_list.pop(0)
@@ -373,6 +408,9 @@ class HandDJ:
         return float(sum(history_list) / len(history_list))  # Return Python float
     
     def process_hands(self, left_hand_landmarks, right_hand_landmarks):
+        # Track if any parameter has changed significantly
+        params_changed = False
+        
         # Process left hand for speed control (thumb-index pinch)
         if left_hand_landmarks:
             left_thumb = np.array([
@@ -387,32 +425,33 @@ class HandDJ:
             # Calculate pinch distance
             left_pinch_dist = np.linalg.norm(left_thumb - left_index)
             
-            # Map pinch distance to speed using calibration data
-            pinch_min = self.calibration["pinch_min"]
-            pinch_max = self.calibration["pinch_max"]
+            # Direct linear mapping from pinch distance to speed
+            # Pinch 0 -> 0.1x speed, Pinch 0.400 -> 2.0x speed
+            pinch_max = self.calibration["pinch_max"]  # Should be 0.400
             
-            # Find medium pinch value - this will correspond to 1.0 (normal speed)
-            pinch_medium = (pinch_min + pinch_max) / 2
+            # Clamp pinch distance to valid range
+            clamped_pinch = max(0, min(pinch_max, left_pinch_dist))
             
-            # Adjust mapping to make medium pinch = normal speed (1.0x)
-            # Closer pinch (< medium) slows down, wider pinch (> medium) speeds up
-            if left_pinch_dist < pinch_medium:
-                # Map [pinch_min, pinch_medium] to [0.1, 1.0]
-                normalized_pinch = (left_pinch_dist - pinch_min) / (pinch_medium - pinch_min)
-                raw_speed = 0.1 + normalized_pinch * 0.9  # Map to [0.1, 1.0]
+            # Linear mapping from pinch to speed 
+            normalized_pinch = clamped_pinch / pinch_max  # 0 to 1 range
+            raw_speed = 0.1 + normalized_pinch * 1.9  # 0.1 to 2.0 range
+            
+            # Debug logging - every 30 frames
+            if hasattr(self, 'frame_count'):
+                self.frame_count += 1
             else:
-                # Map [pinch_medium, pinch_max] to [1.0, 2.0]
-                normalized_pinch = (left_pinch_dist - pinch_medium) / (pinch_max - pinch_medium)
-                raw_speed = 1.0 + normalized_pinch * 1.0  # Map to [1.0, 2.0]
-            
-            # Clamp between 0.1x and 2.0x
-            raw_speed = max(0.1, min(2.0, raw_speed))
-            
-            # Debug print for left hand pinch measurements
-            print(f"LEFT PINCH: dist={left_pinch_dist:.3f}, speed={raw_speed:.2f}x")
+                self.frame_count = 0
+                
+            if self.frame_count % 30 == 0:
+                self.log_pinch_debug("left", left_pinch_dist, raw_speed)
             
             # Apply smoothing
+            old_speed = self.speed
             self.speed = self.smooth_value(raw_speed, self.speed_history)
+            
+            # Check if speed changed significantly
+            if abs(self.speed - old_speed) > 0.05:
+                params_changed = True
         
         # Process right hand for pitch/frequency control
         if right_hand_landmarks:
@@ -428,29 +467,37 @@ class HandDJ:
             # Calculate pinch distance
             right_pinch_dist = np.linalg.norm(right_thumb - right_index)
             
-            # Map pinch distance to pitch using calibration data
-            pinch_min = self.calibration["pinch_min"]
-            pinch_max = self.calibration["pinch_max"]
+            # Direct linear mapping from pinch distance to frequency
+            # Pinch 0 -> 20Hz, Pinch 0.400 -> 600Hz
+            pinch_max = self.calibration["pinch_max"]  # Should be 0.400
             
-            # Find medium pinch value - this will correspond to 0 (normal pitch)
-            pinch_medium = (pinch_min + pinch_max) / 2
+            # Clamp pinch distance to valid range
+            clamped_pinch = max(0, min(pinch_max, right_pinch_dist))
             
-            # Adjust mapping to make medium pinch = normal pitch (0 semitones)
-            # Closer pinch (< medium) lowers pitch, wider pinch (> medium) raises pitch
-            if right_pinch_dist < pinch_medium:
-                # Map [pinch_min, pinch_medium] to [-12, 0]
-                normalized_pinch = (right_pinch_dist - pinch_min) / (pinch_medium - pinch_min)
-                raw_pitch = -12 + normalized_pinch * 12  # Map to [-12, 0]
-            else:
-                # Map [pinch_medium, pinch_max] to [0, 12]
-                normalized_pinch = (right_pinch_dist - pinch_medium) / (pinch_max - pinch_medium)
-                raw_pitch = normalized_pinch * 12  # Map to [0, 12]
+            # Linear mapping from pinch to frequency
+            normalized_pinch = clamped_pinch / pinch_max  # 0 to 1 range
             
-            # Clamp
-            raw_pitch = max(-12, min(12, raw_pitch))
+            # Direct mapping from pinch to frequency (20-600Hz)
+            frequency = 20 + normalized_pinch * 580  # 20 to 600 Hz (changed from 60Hz to 20Hz)
+            
+            # Convert to pitch value (-12 to 12 semitones)
+            # We need to convert from frequency to pitch for internal processing
+            # The formula is: normalized_pitch = (pitch + 12) / 24
+            # So: pitch = normalized_pitch * 24 - 12
+            normalized_freq = normalized_pinch  # 0 to 1 for 20Hz to 600Hz
+            raw_pitch = normalized_freq * 24 - 12  # -12 to 12 semitones
+            
+            # Debug logging - every 30 frames
+            if self.frame_count % 30 == 0:
+                self.log_pinch_debug("right", right_pinch_dist, int(frequency))
             
             # Apply smoothing and convert to Python float
+            old_pitch = self.pitch
             self.pitch = self.smooth_value(raw_pitch, self.pitch_history)
+            
+            # Check if pitch changed significantly
+            if abs(self.pitch - old_pitch) > 0.5:
+                params_changed = True
         
         # Calculate volume based on distance between hands
         if left_hand_landmarks and right_hand_landmarks:
@@ -477,16 +524,26 @@ class HandDJ:
             raw_volume = max(0.0, min(1.0, normalized_dist))
             
             # Apply smoothing and convert to Python float
+            old_volume = self.volume
             self.volume = self.smooth_value(raw_volume, self.volume_history)
+            
+            # Check if volume changed significantly
+            if abs(self.volume - old_volume) > 0.05:
+                params_changed = True
+        
+        # Log all parameters on one line if any of them changed significantly
+        if params_changed:
+            self.log_parameters()
     
     def run(self):
         try:
             print("\nHand DJ started!")
             print("Controls:")
-            print("  - Left hand pinch: Speed control (medium pinch = normal speed)")
-            print("  - Right hand pinch: Pitch control (medium pinch = normal pitch)")
+            print("  - Left hand pinch: Speed control (0.1x to 2.0x)")
+            print("  - Right hand pinch: Pitch control (20Hz to 600Hz)")
             print("  - Distance between hands: Volume")
             print("  - Press 'q' to quit")
+            print("  - Press 'r' to reset all parameters to default")
             
             while self.cap.isOpened():
                 success, image = self.cap.read()
@@ -514,24 +571,36 @@ class HandDJ:
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 
                 # Speed label (left hand)
-                speed_text = f"SPEED: {self.speed:.2f}x"
+                speed_text = f"SPEED: {self.speed:.1f}x"
                 if abs(self.speed - 1.0) < 0.1:
                     speed_text += " (NORMAL)"
                 cv2.putText(image, speed_text, (10, 60), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 
-                # Pitch label (right hand)
-                pitch_text = f"PITCH: {self.pitch:.1f} semitones"
+                # Calibration hint
+                cv2.putText(image, "Pinch 0.000 → 0.1x | Pinch 0.400 → 2.0x", (10, 85), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 0), 1)
+                
+                # Pitch label (right hand) - show frequency instead of semitones
+                base_freq = 20  # Changed from 60Hz to 20Hz
+                max_freq = 600
+                normalized_pitch = (self.pitch + 12) / 24.0
+                frequency = base_freq + normalized_pitch * (max_freq - base_freq)
+                pitch_text = f"PITCH: {int(frequency)}Hz"
                 if abs(self.pitch) < 1.0:
                     pitch_text += " (NORMAL)"
-                cv2.putText(image, pitch_text, (10, 90), 
+                cv2.putText(image, pitch_text, (10, 110), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                 
+                # Calibration hint
+                cv2.putText(image, "Pinch 0.000 → 20Hz | Pinch 0.400 → 600Hz", (10, 135), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 200), 1)
+                
                 # Volume label (distance between hands)
-                volume_text = f"VOLUME: {self.volume:.2f}"
+                volume_text = f"VOLUME: {self.volume:.1f}x"
                 if abs(self.volume - 0.5) < 0.1:
                     volume_text += " (NORMAL)"
-                cv2.putText(image, volume_text, (10, 120), 
+                cv2.putText(image, volume_text, (image.shape[1] - 250, 60), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
                 
                 # Draw hand landmarks on the image
@@ -588,17 +657,27 @@ class HandDJ:
                             np.array([index_tip.x, index_tip.y])
                         )
                         
-                        # Display pinch distance with exact coordinates
-                        pinch_info = f"Pinch: {pinch_dist:.3f}"
+                        # Display pinch distance with more accuracy
+                        pinch_info = f"Pinch: {pinch_dist:.3f} / 0.400"
                         cv2.putText(image, pinch_info, 
-                                   (thumb_pos[0] - 30, thumb_pos[1] - 20), 
+                                   (thumb_pos[0] - 60, thumb_pos[1] - 20), 
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1)
                         
-                        # Display coordinates
-                        coord_text = f"({thumb_pos[0]}, {thumb_pos[1]})"
-                        cv2.putText(image, coord_text, 
-                                   (thumb_pos[0] - 30, thumb_pos[1] + 30), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                        # Display mapped value
+                        if handedness == 'Left':
+                            # Map pinch to speed
+                            normalized = min(1.0, pinch_dist / self.calibration["pinch_max"])
+                            speed_val = 0.1 + normalized * 1.9
+                            value_text = f"Speed: {speed_val:.1f}x"
+                        else:
+                            # Map pinch to frequency
+                            normalized = min(1.0, pinch_dist / self.calibration["pinch_max"])
+                            freq_val = 20 + normalized * 580  # Changed from 60Hz to 20Hz
+                            value_text = f"Pitch: {int(freq_val)}Hz"
+                            
+                        cv2.putText(image, value_text, 
+                                   (thumb_pos[0] - 60, thumb_pos[1] + 30), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1)
                     
                     # Process hand gestures to update audio parameters
                     self.process_hands(left_hand_landmarks, right_hand_landmarks)
@@ -646,15 +725,18 @@ class HandDJ:
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                 
                 # Add help text
-                cv2.putText(image, "Press 'q' to quit", (10, image.shape[0] - 10), 
+                cv2.putText(image, "Press 'q' to quit | 'r' to reset", (10, image.shape[0] - 10), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 
                 # Display the image
                 cv2.imshow('Hand DJ', image)
                 
-                # Exit on 'q' key press
-                if cv2.waitKey(5) & 0xFF == ord('q'):
+                # Check for key presses
+                key = cv2.waitKey(5) & 0xFF
+                if key == ord('q'):
                     break
+                elif key == ord('r'):
+                    self.reset_parameters()
                     
         finally:
             # Clean up
