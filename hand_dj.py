@@ -725,46 +725,25 @@ class HandDJ:
                                              (self.calibration["distance_max"] - self.calibration["distance_min"])))
                         volume_val = normalized * 10.0
                         
-                        # Visual feedback for volume
-                        # Check if close to default (5.0)
-                        is_default_volume = abs(volume_val - 5.0) < 0.5
+                        # Keep volume line and label white
+                        vol_color = (255, 255, 255)  # White for volume
+                        vol_line_width = 2
                         
-                        if is_default_volume:
-                            # At or near default - use a special color
-                            vol_color = (100, 255, 100)  # Light green for normal
-                            vol_line_width = 3
-                        else:
-                            # Color based on distance from default
-                            deviation = abs(volume_val - 5.0) / 5.0  # How far from middle (normalized)
-                            
-                            if volume_val < 5.0:
-                                # Lower than normal volume - cool color
-                                blue_intensity = int(200 * deviation) + 55
-                                vol_color = (blue_intensity, 150, 100)
-                                vol_line_width = 2
-                            else:
-                                # Higher than normal volume - warm color
-                                red_intensity = int(200 * deviation) + 55 
-                                vol_color = (100, 100, red_intensity)
-                                vol_line_width = int(2 + deviation * 2)  # Thicker line for louder volume
-                        
-                        # Draw the volume line with feedback color
+                        # Draw the volume line with white color
                         cv2.line(image, left_midpoint, right_midpoint, vol_color, vol_line_width)
                         
-                        # Draw midpoints with the same color for consistency
+                        # Draw midpoints with white color
                         cv2.circle(image, left_midpoint, 5, vol_color, -1)
                         cv2.circle(image, right_midpoint, 5, vol_color, -1)
                         
                         vol_text = f"Volume: {volume_val:.1f}"
-                        if is_default_volume:
-                            vol_text += " (Normal)"
-                            
-                        # Larger, more visible volume label with color-matched text
+                        
+                        # Larger, more visible volume label with white text
                         cv2.putText(image, vol_text, 
                                    (mid_x - 90, mid_y - 15), 
                                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, vol_color, 2)
                         
-                        # Draw a simple audio level indicator
+                        # Draw a simple audio level indicator with white fill
                         bar_width = 150
                         bar_height = 10
                         bar_x = mid_x - bar_width // 2
@@ -773,7 +752,7 @@ class HandDJ:
                         # Draw background bar
                         cv2.rectangle(image, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (50, 50, 50), -1)
                         
-                        # Draw volume level
+                        # Draw volume level in white
                         fill_width = int(volume_val / 10.0 * bar_width)
                         cv2.rectangle(image, (bar_x, bar_y), (bar_x + fill_width, bar_y + bar_height), vol_color, -1)
                         
