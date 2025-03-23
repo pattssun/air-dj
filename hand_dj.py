@@ -70,6 +70,25 @@ class HandDJ:
         if not self.cap.isOpened():
             print("Error: Could not open camera.")
             sys.exit(1)
+        
+        # For gesture recognition
+        self.twist_history = {
+            'left': {'angles': [], 'timestamps': [], 'triggered': False},
+            'right': {'angles': [], 'timestamps': [], 'triggered': False}
+        }
+        self.twist_threshold = 15  # Degrees from horizontal
+        self.twist_cooldown = 1.0  # Seconds between twist actions
+        self.twist_memory = 5  # Frames to track for gesture detection
+        
+        # For playlist functionality
+        self.playlist = []
+        self.current_track_index = 0
+        self.track_change_time = 0
+        self.track_change_animation = 0
+        
+        if audio_file:
+            self.playlist.append(audio_file)
+            self.scan_for_additional_tracks(audio_file)
     
     def use_sine_wave(self):
         """Switch to sine wave audio source"""
@@ -415,6 +434,156 @@ class HandDJ:
         history_list.append(float(new_value))  # Ensure it's a Python float
         return float(sum(history_list) / len(history_list))  # Return Python float
     
+    def scan_for_additional_tracks(self, first_track):
+        """Look for additional audio tracks in the same directory"""
+        try:
+            # Get the directory of the first track
+            directory = os.path.dirname(first_track)
+            if not directory:
+                directory = '.'
+                
+            # Get the file extension of the first track
+            ext = os.path.splitext(first_track)[1].lower()
+            
+            # Find all files with the same extension
+            for file in os.listdir(directory):
+                file_path = os.path.join(directory, file)
+                if file_path != first_track and file_path.lower().endswith(ext):
+                    # Add to playlist if it's a different audio file with same extension
+                    self.playlist.append(file_path)
+            
+            if len(self.playlist) > 1:
+                print(f"Found {len(self.playlist)} tracks in playlist:")
+                for i, track in enumerate(self.playlist):
+                    print(f"  {i+1}. {os.path.basename(track)}")
+        except Exception as e:
+            print(f"Error scanning for additional tracks: {e}")
+    
+    def next_track(self):
+        """Switch to the next track in the playlist"""
+        if len(self.playlist) <= 1:
+            print("No more tracks in playlist")
+            return False
+            
+        # Move to next track
+        self.current_track_index = (self.current_track_index + 1) % len(self.playlist)
+        next_file = self.playlist[self.current_track_index]
+        print(f"▶️ Next track: {os.path.basename(next_file)}")
+        
+        # Stop current audio
+        self.server.stop()
+        
+        # Restart server with new audio file
+        self.server = Server().boot()
+        self.server.start()
+        
+        # Set new audio path
+        self.audio_path = next_file
+        
+        # Try to load the new audio file
+        if not self.try_load_audio():
+            # If loading fails, fall back to sine wave
+            self.use_sine_wave()
+            
+        # Update audio params to maintain current settings
+        self.update_audio_params()
+        
+        # Set track change animation
+        self.track_change_time = time.time()
+        self.track_change_animation = 1  # 1 = next track
+        
+        return True
+        
+    def prev_track(self):
+        """Switch to the previous track in the playlist"""
+        if len(self.playlist) <= 1:
+            print("No more tracks in playlist")
+            return False
+            
+        # Move to previous track
+        self.current_track_index = (self.current_track_index - 1) % len(self.playlist)
+        prev_file = self.playlist[self.current_track_index]
+        print(f"◀️ Previous track: {os.path.basename(prev_file)}")
+        
+        # Stop current audio
+        self.server.stop()
+        
+        # Restart server with new audio file
+        self.server = Server().boot()
+        self.server.start()
+        
+        # Set new audio path
+        self.audio_path = prev_file
+        
+        # Try to load the new audio file
+        if not self.try_load_audio():
+            # If loading fails, fall back to sine wave
+            self.use_sine_wave()
+            
+        # Update audio params to maintain current settings
+        self.update_audio_params()
+        
+        # Set track change animation
+        self.track_change_time = time.time()
+        self.track_change_animation = -1  # -1 = previous track
+        
+        return True
+    
+    def detect_horizontal_twist(self, thumb_pos, index_pos, handedness):
+        """Detect if the pinch line is being held horizontally (twisted)"""
+        if thumb_pos is None or index_pos is None:
+            return False
+            
+        # Calculate the angle of the pinch line
+        dx = index_pos[0] - thumb_pos[0]
+        dy = index_pos[1] - thumb_pos[1]
+        
+        # Calculate angle in degrees (0 = horizontal, 90 = vertical)
+        angle = np.degrees(np.arctan2(dy, dx))
+        
+        # Get the history for this hand
+        history_key = 'left' if handedness == 'Left' else 'right'
+        history = self.twist_history[history_key]
+        
+        # Add current angle to history with timestamp
+        current_time = time.time()
+        history['angles'].append(angle)
+        history['timestamps'].append(current_time)
+        
+        # Keep history at manageable size
+        if len(history['angles']) > self.twist_memory:
+            history['angles'].pop(0)
+            history['timestamps'].pop(0)
+            
+        # Debug the angle occasionally
+        if hasattr(self, 'frame_count') and self.frame_count % 60 == 0:
+            print(f"DEBUG: {handedness} hand angle: {angle:.1f} degrees")
+            
+        # Check for horizontal twist gesture with direction
+        if handedness == 'Left':
+            # For left hand, check if twisted to the left (angle near 180 or -180 degrees)
+            # When twisted left, angle will be close to 180 or -180 degrees
+            is_twisted = abs(abs(angle) - 180) < self.twist_threshold
+        else:
+            # For right hand, just check if horizontal (angle near 0)
+            is_twisted = abs(angle) < self.twist_threshold
+        
+        # Only trigger once when twist is detected and not recently triggered
+        if is_twisted and not history['triggered']:
+            # Check cooldown
+            if len(history['timestamps']) > 0:
+                last_trigger_time = history.get('last_trigger_time', 0)
+                if current_time - last_trigger_time > self.twist_cooldown:
+                    history['triggered'] = True
+                    history['last_trigger_time'] = current_time
+                    print(f"DEBUG: {handedness} twist detected, angle = {angle:.1f}")
+                    return True
+        elif not is_twisted:
+            # Reset trigger state when no longer in twisted position
+            history['triggered'] = False
+            
+        return False
+    
     def process_hands(self, left_hand_landmarks, right_hand_landmarks):
         # Track if any parameter has changed significantly
         params_changed = False
@@ -423,16 +592,24 @@ class HandDJ:
         left_pinch_midpoint = None
         right_pinch_midpoint = None
         
+        # Track thumb and index positions for gesture detection
+        left_thumb_pos = None
+        left_index_pos = None
+        right_thumb_pos = None
+        right_index_pos = None
+        
         # Process left hand for speed control (thumb-index pinch)
         if left_hand_landmarks:
-            left_thumb = np.array([
-                left_hand_landmarks.landmark[4].x,
-                left_hand_landmarks.landmark[4].y
-            ])
-            left_index = np.array([
-                left_hand_landmarks.landmark[8].x,
-                left_hand_landmarks.landmark[8].y
-            ])
+            # Get screen coordinates for gesture detection
+            h, w, c = self.image_shape if hasattr(self, 'image_shape') else (720, 1280, 3)
+            
+            left_thumb_tip = left_hand_landmarks.landmark[4]
+            left_index_tip = left_hand_landmarks.landmark[8]
+            left_thumb_pos = (int(left_thumb_tip.x * w), int(left_thumb_tip.y * h))
+            left_index_pos = (int(left_index_tip.x * w), int(left_index_tip.y * h))
+            
+            left_thumb = np.array([left_thumb_tip.x, left_thumb_tip.y])
+            left_index = np.array([left_index_tip.x, left_index_tip.y])
             
             # Calculate midpoint of left pinch line
             left_pinch_midpoint = (left_thumb + left_index) / 2
@@ -467,17 +644,24 @@ class HandDJ:
             # Check if speed changed significantly
             if abs(self.speed - old_speed) > 0.05:
                 params_changed = True
+            
+            # Check for horizontal twist gesture with left hand
+            if self.detect_horizontal_twist(left_thumb_pos, left_index_pos, 'Left'):
+                # Left hand horizontal twist - previous track
+                self.prev_track()
         
         # Process right hand for pitch/frequency control
         if right_hand_landmarks:
-            right_thumb = np.array([
-                right_hand_landmarks.landmark[4].x,
-                right_hand_landmarks.landmark[4].y
-            ])
-            right_index = np.array([
-                right_hand_landmarks.landmark[8].x,
-                right_hand_landmarks.landmark[8].y
-            ])
+            # Get screen coordinates for gesture detection
+            h, w, c = self.image_shape if hasattr(self, 'image_shape') else (720, 1280, 3)
+            
+            right_thumb_tip = right_hand_landmarks.landmark[4]
+            right_index_tip = right_hand_landmarks.landmark[8]
+            right_thumb_pos = (int(right_thumb_tip.x * w), int(right_thumb_tip.y * h))
+            right_index_pos = (int(right_index_tip.x * w), int(right_index_tip.y * h))
+            
+            right_thumb = np.array([right_thumb_tip.x, right_thumb_tip.y])
+            right_index = np.array([right_index_tip.x, right_index_tip.y])
             
             # Calculate midpoint of right pinch line
             right_pinch_midpoint = (right_thumb + right_index) / 2
@@ -516,6 +700,11 @@ class HandDJ:
             # Check if pitch changed significantly
             if abs(self.pitch - old_pitch) > 0.5:
                 params_changed = True
+            
+            # Check for horizontal twist gesture with right hand
+            if self.detect_horizontal_twist(right_thumb_pos, right_index_pos, 'Right'):
+                # Right hand horizontal twist - next track
+                self.next_track()
         
         # Calculate volume based on distance between pinch midpoints
         if left_pinch_midpoint is not None and right_pinch_midpoint is not None:
@@ -543,6 +732,48 @@ class HandDJ:
         if params_changed:
             self.log_parameters()
     
+    def draw_track_change_animation(self, image):
+        """Draw a track change animation when switching tracks"""
+        if self.track_change_animation == 0 or time.time() - self.track_change_time > 1.5:
+            return
+        
+        h, w, c = image.shape
+        
+        # Calculate animation progress (0.0 to 1.0)
+        progress = min(1.0, (time.time() - self.track_change_time) / 1.0)
+        
+        # Create animation based on direction
+        if self.track_change_animation > 0:  # Next track
+            # Simplified text
+            arrow_text = "NEXT TRACK"
+            arrow_color = (100, 255, 100)  # Light green
+            
+            # Arrow start position moves from left to right
+            start_x = int(w * 0.1 + progress * w * 0.8)
+            
+        else:  # Previous track
+            # Simplified text
+            arrow_text = "PREV TRACK"
+            arrow_color = (100, 255, 100)  # Light green
+            
+            # Arrow start position moves from right to left
+            start_x = int(w * 0.9 - progress * w * 0.8)
+        
+        # Draw text with fading effect
+        alpha = int(255 * (1.0 - progress))
+        
+        # Create overlay for text with fade effect
+        overlay = image.copy()
+        cv2.putText(overlay, arrow_text, (start_x - 80, h // 2), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, arrow_color, 2)
+        
+        # Blend based on alpha for fade-out effect
+        cv2.addWeighted(overlay, alpha/255, image, 1 - alpha/255, 0, image)
+        
+        # Reset animation when complete
+        if progress >= 1.0:
+            self.track_change_animation = 0
+    
     def run(self):
         try:
             print("\nHand DJ started!")
@@ -550,14 +781,24 @@ class HandDJ:
             print("  - Left hand pinch: Speed control (0.1x to 2.0x)")
             print("  - Right hand pinch: Pitch control (20Hz to 600Hz)")
             print("  - Distance between hands: Volume (0-10)")
+            print("  - Right hand horizontal twist: Next track")
+            print("  - Left hand twist to the left: Previous track")
             print("  - Press 'q' to quit")
             print("  - Press 'r' to reset all parameters to default")
+            print("  - Press 'n' for next track, 'p' for previous track")
+            
+            if len(self.playlist) > 1:
+                print(f"\nPlaylist loaded with {len(self.playlist)} tracks")
+                print(f"Current track: {os.path.basename(self.playlist[self.current_track_index])}")
             
             while self.cap.isOpened():
                 success, image = self.cap.read()
                 if not success:
                     print("Failed to capture video frame.")
                     break
+                
+                # Store image shape for gesture detection
+                self.image_shape = image.shape
                 
                 # Flip the image horizontally for a mirror effect
                 image = cv2.flip(image, 1)
@@ -769,6 +1010,9 @@ class HandDJ:
                 cv2.putText(image, "Press 'q' to quit | 'r' to reset", (10, image.shape[0] - 10), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 
+                # Add track change animation if active
+                self.draw_track_change_animation(image)
+                
                 # Display the image
                 cv2.imshow('Hand DJ', image)
                 
@@ -778,6 +1022,10 @@ class HandDJ:
                     break
                 elif key == ord('r'):
                     self.reset_parameters()
+                elif key == ord('n'):
+                    self.next_track()
+                elif key == ord('p'):
+                    self.prev_track()
                     
         finally:
             # Clean up
