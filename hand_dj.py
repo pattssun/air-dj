@@ -53,7 +53,7 @@ class HandDJ:
         # Parameters for audio manipulation
         self.speed = 1.0        # Default speed (1.0 = normal)
         self.pitch = 0          # Default pitch shift (0 = no shift)
-        self.volume = 0.5       # Default volume (0.5 = 50%)
+        self.volume = 5.0       # Default volume (5.0 = normal on 0-10 scale)
         
         # Global variable for PYO to control SfPlayer
         self.g_speed = SigTo(1.0, time=0.1)
@@ -61,7 +61,7 @@ class HandDJ:
         # Smoothing parameters for gesture control
         self.speed_history = [1.0] * 5
         self.pitch_history = [0] * 5
-        self.volume_history = [0.5] * 5
+        self.volume_history = [5.0] * 5
         
         # Video capture setup
         self.cap = cv2.VideoCapture(0)
@@ -214,7 +214,8 @@ class HandDJ:
                         self.harmonic2.freq = speed_adjusted_freq * 3  # Second harmonic
 
                 # Update volume with proper typecasting
-                vol = float(self.volume)
+                # Convert 0-10 scale to 0-1 for audio processing
+                vol = float(self.volume) / 10.0
                 if hasattr(self, 'amp_sig'):
                     self.amp_sig.value = vol * 0.6
                 else:
@@ -232,7 +233,8 @@ class HandDJ:
                 # Convert all parameters to Python floats to avoid numpy type issues
                 speed = float(self.speed)
                 pitch = float(self.pitch)
-                volume = float(self.volume)
+                # Convert 0-10 scale to 0-1 for audio processing
+                volume = float(self.volume) / 10.0
                 
                 # For SfPlayer (MP3 files)
                 if hasattr(self, 'player') and isinstance(self.player, SfPlayer):
@@ -366,18 +368,18 @@ class HandDJ:
         # Reset to defaults
         self.speed = 1.0
         self.pitch = 0.0
-        self.volume = 0.5
+        self.volume = 5.0
         
         # Reset the smoothing history
         self.speed_history = [1.0] * len(self.speed_history)
         self.pitch_history = [0.0] * len(self.pitch_history)
-        self.volume_history = [0.5] * len(self.volume_history)
+        self.volume_history = [5.0] * len(self.volume_history)
         
         # Update audio immediately
         self.update_audio_params()
         
         # Log the reset
-        print(f"✓ RESET: Speed: 1.0x | Pitch: {int(330)}Hz | Volume: 0.5x")
+        print(f"✓ RESET: Speed: 1.0x | Pitch: {int(330)}Hz | Volume: 5.0")
         
         # Print current parameters to maintain consistent format
         self.log_parameters()
@@ -385,13 +387,13 @@ class HandDJ:
     def log_parameters(self):
         """Log current parameter values in a single line format"""
         # Calculate frequency from pitch
-        base_freq = 20  # Changed from 60Hz to 20Hz
+        base_freq = 20
         max_freq = 600
         normalized_pitch = (self.pitch + 12) / 24.0
         frequency = int(base_freq + normalized_pitch * (max_freq - base_freq))
         
         # Format output with all parameters on one line
-        print(f"LEVELS | Speed: {self.speed:.1f}x | Pitch: {frequency}Hz | Volume: {self.volume:.1f}x")
+        print(f"LEVELS | Speed: {self.speed:.1f}x | Pitch: {frequency}Hz | Volume: {self.volume:.1f}")
     
     def log_pinch_debug(self, hand, pinch_dist, mapped_value):
         """Log detailed debug information about pinch distances and mappings"""
@@ -519,16 +521,16 @@ class HandDJ:
             dist_max = self.calibration["distance_max"]
             dist_range = max(0.001, dist_max - dist_min)  # Avoid division by zero
             
-            # Normalize and map to volume range (0.0 to 1.0)
+            # Normalize and map to volume range (0.0 to 10.0)
             normalized_dist = (hand_distance - dist_min) / dist_range
-            raw_volume = max(0.0, min(1.0, normalized_dist))
+            raw_volume = max(0.0, min(1.0, normalized_dist)) * 10.0
             
             # Apply smoothing and convert to Python float
             old_volume = self.volume
             self.volume = self.smooth_value(raw_volume, self.volume_history)
             
             # Check if volume changed significantly
-            if abs(self.volume - old_volume) > 0.05:
+            if abs(self.volume - old_volume) > 0.5:
                 params_changed = True
         
         # Log all parameters on one line if any of them changed significantly
@@ -541,7 +543,7 @@ class HandDJ:
             print("Controls:")
             print("  - Left hand pinch: Speed control (0.1x to 2.0x)")
             print("  - Right hand pinch: Pitch control (20Hz to 600Hz)")
-            print("  - Distance between hands: Volume")
+            print("  - Distance between hands: Volume (0-10)")
             print("  - Press 'q' to quit")
             print("  - Press 'r' to reset all parameters to default")
             
@@ -559,49 +561,6 @@ class HandDJ:
                 
                 # Process the image and detect hands
                 results = self.hands.process(rgb_image)
-                
-                # Draw parameter labels at the top of screen
-                # Create a semi-transparent overlay for parameter labels
-                overlay = image.copy()
-                cv2.rectangle(overlay, (0, 0), (image.shape[1], 150), (0, 0, 0), -1)
-                cv2.addWeighted(overlay, 0.5, image, 0.5, 0, image)
-                
-                # Add parameter labels with clearer annotations
-                cv2.putText(image, "PARAMETERS:", (10, 30), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                
-                # Speed label (left hand)
-                speed_text = f"SPEED: {self.speed:.1f}x"
-                if abs(self.speed - 1.0) < 0.1:
-                    speed_text += " (NORMAL)"
-                cv2.putText(image, speed_text, (10, 60), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                
-                # Calibration hint
-                cv2.putText(image, "Pinch 0.000 → 0.1x | Pinch 0.400 → 2.0x", (10, 85), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 0), 1)
-                
-                # Pitch label (right hand) - show frequency instead of semitones
-                base_freq = 20  # Changed from 60Hz to 20Hz
-                max_freq = 600
-                normalized_pitch = (self.pitch + 12) / 24.0
-                frequency = base_freq + normalized_pitch * (max_freq - base_freq)
-                pitch_text = f"PITCH: {int(frequency)}Hz"
-                if abs(self.pitch) < 1.0:
-                    pitch_text += " (NORMAL)"
-                cv2.putText(image, pitch_text, (10, 110), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                
-                # Calibration hint
-                cv2.putText(image, "Pinch 0.000 → 20Hz | Pinch 0.400 → 600Hz", (10, 135), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 200), 1)
-                
-                # Volume label (distance between hands)
-                volume_text = f"VOLUME: {self.volume:.1f}x"
-                if abs(self.volume - 0.5) < 0.1:
-                    volume_text += " (NORMAL)"
-                cv2.putText(image, volume_text, (image.shape[1] - 250, 60), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
                 
                 # Draw hand landmarks on the image
                 if results.multi_hand_landmarks:
@@ -637,12 +596,6 @@ class HandDJ:
                         
                         # Different colors for different hands
                         color = (0, 0, 255) if handedness == 'Left' else (0, 255, 0)
-                        label = "LEFT HAND (SPEED)" if handedness == 'Left' else "RIGHT HAND (PITCH)"
-                        
-                        # Draw parameter label above hand
-                        cv2.putText(image, label, 
-                                   (thumb_pos[0] - 80, thumb_pos[1] - 40), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
                         
                         # Draw circles on finger tips
                         cv2.circle(image, thumb_pos, 10, color, -1)
@@ -657,12 +610,6 @@ class HandDJ:
                             np.array([index_tip.x, index_tip.y])
                         )
                         
-                        # Display pinch distance with more accuracy
-                        pinch_info = f"Pinch: {pinch_dist:.3f} / 0.400"
-                        cv2.putText(image, pinch_info, 
-                                   (thumb_pos[0] - 60, thumb_pos[1] - 20), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1)
-                        
                         # Display mapped value
                         if handedness == 'Left':
                             # Map pinch to speed
@@ -672,12 +619,13 @@ class HandDJ:
                         else:
                             # Map pinch to frequency
                             normalized = min(1.0, pinch_dist / self.calibration["pinch_max"])
-                            freq_val = 20 + normalized * 580  # Changed from 60Hz to 20Hz
+                            freq_val = 20 + normalized * 580
                             value_text = f"Pitch: {int(freq_val)}Hz"
                             
+                        # Larger, more visible parameter labels at hand points
                         cv2.putText(image, value_text, 
-                                   (thumb_pos[0] - 60, thumb_pos[1] + 30), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1)
+                                   (thumb_pos[0] - 80, thumb_pos[1] + 40), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
                     
                     # Process hand gestures to update audio parameters
                     self.process_hands(left_hand_landmarks, right_hand_landmarks)
@@ -691,7 +639,7 @@ class HandDJ:
                         left_pos = (int(left_wrist.x * w), int(left_wrist.y * h))
                         right_pos = (int(right_wrist.x * w), int(right_wrist.y * h))
                         
-                        # Draw line between hands with "VOLUME" label
+                        # Draw line between hands 
                         cv2.line(image, left_pos, right_pos, (255, 255, 0), 2)
                         
                         # Show hand distance
@@ -703,21 +651,16 @@ class HandDJ:
                         mid_x = (left_pos[0] + right_pos[0]) // 2
                         mid_y = (left_pos[1] + right_pos[1]) // 2
                         
-                        # Add "VOLUME" label to the line
-                        cv2.putText(image, "VOLUME CONTROL", 
-                                   (mid_x - 70, mid_y - 30), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                        # Display volume value based on distance
+                        normalized = min(1.0, max(0.0, (hand_distance - self.calibration["distance_min"]) / 
+                                             (self.calibration["distance_max"] - self.calibration["distance_min"])))
+                        volume_val = normalized * 10.0
+                        vol_text = f"Volume: {volume_val:.1f}"
                         
-                        # Display distance value and coordinates
-                        dist_text = f"Distance: {hand_distance:.3f}"
-                        cv2.putText(image, dist_text, 
-                                   (mid_x - 50, mid_y - 10), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
-                        
-                        coords_text = f"({left_pos[0]},{left_pos[1]}) to ({right_pos[0]},{right_pos[1]})"
-                        cv2.putText(image, coords_text, 
-                                   (mid_x - 120, mid_y + 20), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+                        # Larger, more visible volume label
+                        cv2.putText(image, vol_text, 
+                                   (mid_x - 70, mid_y - 15), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 0), 2)
                 else:
                     # Show "No hands detected" when no hands are visible
                     cv2.putText(image, "No hands detected - Show both hands to camera", 
