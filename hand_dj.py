@@ -378,8 +378,14 @@ class HandDJ:
         # Update audio immediately
         self.update_audio_params()
         
-        # Log the reset
-        print(f"✓ RESET: Speed: 1.0x | Pitch: {int(330)}Hz | Volume: 5.0")
+        # Calculate consistent default frequency based on pitch=0
+        base_freq = 20
+        max_freq = 600
+        normalized_pitch = (0 + 12) / 24.0
+        default_frequency = int(base_freq + normalized_pitch * (max_freq - base_freq))
+        
+        # Log the reset with consistent frequency calculation
+        print(f"✓ RESET: Speed: 1.0x | Pitch: {default_frequency}Hz | Volume: 5.0")
         
         # Print current parameters to maintain consistent format
         self.log_parameters()

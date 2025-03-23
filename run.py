@@ -126,6 +126,7 @@ def main():
     parser.add_argument('--song', type=str, help='Specify a song to play from the songs folder')
     parser.add_argument('--convert', action='store_true', help='Run MP3 to WAV converter before starting')
     parser.add_argument('--hq', action='store_true', help='Enable high quality audio enhancements (default: enabled)')
+    parser.add_argument('--debug', action='store_true', help='Show detailed error information')
     args = parser.parse_args()
     
     # Check dependencies
@@ -171,12 +172,32 @@ def main():
             app = HandDJ(song_path)
             app.run()
         except Exception as e:
-            print(f"Error starting MediaPipe version: {e}")
-            print("Falling back to simple version...")
-            from simple_hand_dj import SimpleHandDJ
-            app = SimpleHandDJ(song_path)
-            app.setup_audio_player(song_path)
-            app.run()
+            if args.debug:
+                import traceback
+                print(f"\nError starting MediaPipe version: {e}")
+                print("\nDetailed error information:")
+                traceback.print_exc()
+            
+            print("\nWould you like to:")
+            print("1. Try again with MediaPipe")
+            print("2. Fall back to simple version")
+            print("3. Quit")
+            
+            choice = input("Enter your choice (1/2/3): ").strip()
+            
+            if choice == "1":
+                print("\nRetrying with MediaPipe...")
+                from hand_dj import HandDJ
+                app = HandDJ(song_path)
+                app.run()
+            elif choice == "2":
+                print("\nFalling back to simple version...")
+                from simple_hand_dj import SimpleHandDJ
+                app = SimpleHandDJ(song_path)
+                app.setup_audio_player(song_path)
+                app.run()
+            else:
+                print("\nExiting...")
 
 if __name__ == "__main__":
     try:
