@@ -577,14 +577,7 @@ class HandDJ:
                         elif handedness == 'Right':  # Camera is mirrored, so this is the actual RIGHT hand
                             right_hand_landmarks = hand_landmarks
                         
-                        # Draw the landmarks
-                        self.mp_drawing.draw_landmarks(
-                            image,
-                            hand_landmarks,
-                            self.mp_hands.HAND_CONNECTIONS,
-                            self.mp_drawing_styles.get_default_hand_landmarks_style(),
-                            self.mp_drawing_styles.get_default_hand_connections_style()
-                        )
+                        # Don't draw all hand landmarks, just the important points for controls
                         
                         # Draw circle at thumb and index tips
                         thumb_tip = hand_landmarks.landmark[4]
@@ -594,8 +587,8 @@ class HandDJ:
                         thumb_pos = (int(thumb_tip.x * w), int(thumb_tip.y * h))
                         index_pos = (int(index_tip.x * w), int(index_tip.y * h))
                         
-                        # Different colors for different hands
-                        color = (0, 0, 255) if handedness == 'Left' else (0, 255, 0)
+                        # White color for all elements
+                        color = (255, 255, 255)
                         
                         # Draw circles on finger tips
                         cv2.circle(image, thumb_pos, 10, color, -1)
@@ -622,7 +615,7 @@ class HandDJ:
                             freq_val = 20 + normalized * 580
                             value_text = f"Pitch: {int(freq_val)}Hz"
                             
-                        # Larger, more visible parameter labels at hand points
+                        # Larger, more visible parameter labels at hand points with white color
                         cv2.putText(image, value_text, 
                                    (thumb_pos[0] - 80, thumb_pos[1] + 40), 
                                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
@@ -652,12 +645,12 @@ class HandDJ:
                             int((right_thumb_tip.y + right_index_tip.y) * h / 2)
                         )
                         
-                        # Draw midpoints
-                        cv2.circle(image, left_midpoint, 5, (255, 255, 0), -1)
-                        cv2.circle(image, right_midpoint, 5, (255, 255, 0), -1)
+                        # Draw midpoints with white color
+                        cv2.circle(image, left_midpoint, 5, (255, 255, 255), -1)
+                        cv2.circle(image, right_midpoint, 5, (255, 255, 255), -1)
                         
-                        # Draw line between midpoints for volume
-                        cv2.line(image, left_midpoint, right_midpoint, (255, 255, 0), 2)
+                        # Draw line between midpoints for volume with white color
+                        cv2.line(image, left_midpoint, right_midpoint, (255, 255, 255), 2)
                         
                         # Calculate midpoint for volume label
                         mid_x = (left_midpoint[0] + right_midpoint[0]) // 2
@@ -669,23 +662,23 @@ class HandDJ:
                             np.array([right_midpoint[0], right_midpoint[1]]) / np.array([w, h])
                         )
                         
-                        # Display volume value based on distance
+                        # Display volume value based on distance with white color
                         normalized = min(1.0, max(0.0, (midpoint_distance - self.calibration["distance_min"]) / 
                                              (self.calibration["distance_max"] - self.calibration["distance_min"])))
                         volume_val = normalized * 10.0
                         vol_text = f"Volume: {volume_val:.1f}"
                         
-                        # Larger, more visible volume label
+                        # Larger, more visible volume label with white color
                         cv2.putText(image, vol_text, 
                                    (mid_x - 70, mid_y - 15), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 0), 2)
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
                 else:
-                    # Show "No hands detected" when no hands are visible
+                    # Show "No hands detected" when no hands are visible with white color
                     cv2.putText(image, "No hands detected - Show both hands to camera", 
                                (image.shape[1]//2 - 200, image.shape[0]//2), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 
-                # Add help text
+                # Add help text with white color
                 cv2.putText(image, "Press 'q' to quit | 'r' to reset", (10, image.shape[0] - 10), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 
