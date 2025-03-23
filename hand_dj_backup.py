@@ -79,9 +79,6 @@ class HandDJ:
         self.waveform_update_time = time.time()
         self.waveform_update_interval = 0.05  # 20 updates per second
         
-        # For frame counting (debug and timing)
-        self.frame_count = 0
-        
         # For gesture recognition
         self.twist_history = {
             'left': {'angles': [], 'timestamps': [], 'triggered': False},
