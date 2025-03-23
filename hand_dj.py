@@ -9,7 +9,7 @@ import logging
 from pyo import *
 
 # Import specific pyo modules for better clarity
-from pyo import Server, SndTable, TableRead, Sine, SfPlayer, Harmonizer, STRev, Mix, SigTo
+from pyo import Server, SndTable, TableRead, Sine, SfPlayer, Harmonizer, STRev, Mix, SigTo, Sig
 
 # Disable TensorFlow logging
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=DEBUG, 1=INFO, 2=WARNING, 3=ERROR
@@ -75,14 +75,22 @@ class HandDJ:
         """Switch to sine wave audio source"""
         print("Using sine wave as audio source with harmonics")
         # Create a richer sine wave with harmonics for better quality
-        self.sine = Sine(freq=440, mul=0.3)
-        self.harmonic1 = Sine(freq=880, mul=0.15)  # First harmonic
-        self.harmonic2 = Sine(freq=1320, mul=0.08)  # Second harmonic
+        
+        # Create control signals for smoother transitions
+        self.freq_sig = SigTo(440, time=0.05, init=440)
+        self.amp_sig = SigTo(0.3, time=0.05, init=0.3)
+        
+        # Create a richer sine wave with harmonics for better quality
+        self.sine = Sine(freq=self.freq_sig, mul=self.amp_sig)
+        self.harmonic1 = Sine(freq=self.freq_sig*2, mul=self.amp_sig*0.5)  # First harmonic
+        self.harmonic2 = Sine(freq=self.freq_sig*3, mul=self.amp_sig*0.27)  # Second harmonic
         self.mixer = Mix([self.sine, self.harmonic1, self.harmonic2], voices=3)
         self.output = self.mixer.out()
+        
         # Add reverb for better sound
         self.reverb = STRev(self.output, revtime=0.8, cutoff=8000, bal=0.1).out()
         self.audio_path = None
+        print("Sine wave synthesizer initialized with speed and pitch controls")
     
     def try_load_audio(self):
         """Try multiple methods to load audio file"""
@@ -90,11 +98,16 @@ class HandDJ:
             # Method 1: Try SfPlayer with high quality settings (good for MP3)
             print(f"Method 1: Trying SfPlayer with {self.audio_path}")
             try:
-                # Create a global speed control variable
-                self.g_speed = SigTo(1.0, time=0.1, init=1.0)
+                # Create a global speed control variable with smoother transition
+                self.g_speed = SigTo(1.0, time=0.05, init=1.0)
+                print("Created global speed control with SigTo")
                 
                 # Use the global speed control for SfPlayer
-                self.player = SfPlayer(self.audio_path, speed=self.g_speed, loop=True, mul=0.8, interp=4)
+                print("Initializing SfPlayer with speed control...")
+                # For SfPlayer, we need to explicitly set the speed parameter
+                # SfPlayer treats speed differently than our 0.1-2.0 range
+                # We'll create a direct reference for better control
+                self.player = SfPlayer(self.audio_path, loop=True, mul=0.8, interp=4)
                 
                 # Create a Harmonizer for pitch shifting
                 self.pitch_shifter = Harmonizer(self.player, transpo=0, mul=0.8)
@@ -112,14 +125,18 @@ class HandDJ:
                 # Load audio into table
                 self.table = SndTable(self.audio_path)
                 
-                # Create TableRead player with initial rate
-                base_rate = self.table.getRate()
-                print(f"DEBUG - Loaded audio with base rate: {base_rate} Hz")
+                # Store the base rate for future speed calculations
+                self.base_rate = self.table.getRate()
+                print(f"DEBUG - Loaded audio with base rate: {self.base_rate} Hz")
+                
+                # Create a rate control variable with smoother transition
+                self.g_rate = SigTo(self.base_rate, time=0.05, init=self.base_rate)
+                print("Created global rate control with SigTo")
                 
                 # Create TableRead with better interpolation
                 self.player = TableRead(
                     table=self.table, 
-                    freq=base_rate,  # Initial rate 
+                    freq=self.g_rate,  # Use rate control object instead of fixed rate
                     loop=True,
                     interp=4,  # Higher quality interpolation
                     mul=0.8
@@ -132,7 +149,7 @@ class HandDJ:
                 self.reverb = STRev(self.pitch_shifter, revtime=1.0, cutoff=10000, bal=0.1).out()
                 self.output = self.reverb
                 
-                print("Success: Using SndTable with enhanced quality")
+                print("Success: Using SndTable with enhanced quality and speed control")
                 return True
             except Exception as e:
                 print(f"SndTable failed: {e}")
@@ -177,20 +194,36 @@ class HandDJ:
                 normalized_pitch = (self.pitch + 12) / 24.0  # Normalize pitch to 0-1 range
                 new_freq = base_freq + normalized_pitch * (max_freq - base_freq)
                 
-                # Update sine wave and harmonics
-                self.sine.freq = new_freq
-                if hasattr(self, 'harmonic1'):
-                    self.harmonic1.freq = new_freq * 2  # First harmonic (octave up)
-                if hasattr(self, 'harmonic2'):
-                    self.harmonic2.freq = new_freq * 3  # Second harmonic
+                # Apply speed factor to the frequency
+                # Speed affects the perceived pitch in sine wave synthesis
+                speed_adjusted_freq = new_freq * self.speed
+                print(f"DEBUG - Sine wave: base freq={new_freq:.1f}Hz, speed adjusted={speed_adjusted_freq:.1f}Hz")
+                
+                # Update sine wave and harmonics with smooth transitions
+                if hasattr(self, 'freq_sig'):
+                    self.freq_sig.value = speed_adjusted_freq
+                else:
+                    # Fallback direct control
+                    self.sine.freq = speed_adjusted_freq
+                    if hasattr(self, 'harmonic1'):
+                        self.harmonic1.freq = speed_adjusted_freq * 2  # First harmonic (octave up)
+                    if hasattr(self, 'harmonic2'):
+                        self.harmonic2.freq = speed_adjusted_freq * 3  # Second harmonic
 
                 # Update volume with proper typecasting
                 vol = float(self.volume)
-                self.sine.mul = vol * 0.6
-                if hasattr(self, 'harmonic1'):
-                    self.harmonic1.mul = vol * 0.3
-                if hasattr(self, 'harmonic2'):
-                    self.harmonic2.mul = vol * 0.15
+                if hasattr(self, 'amp_sig'):
+                    self.amp_sig.value = vol * 0.6
+                else:
+                    # Fallback direct control
+                    self.sine.mul = vol * 0.6
+                    if hasattr(self, 'harmonic1'):
+                        self.harmonic1.mul = vol * 0.3
+                    if hasattr(self, 'harmonic2'):
+                        self.harmonic2.mul = vol * 0.15
+                
+                # Force audio processing to update
+                self.server.process()
             else:
                 # For audio file
                 # Convert all parameters to Python floats to avoid numpy type issues
@@ -198,15 +231,84 @@ class HandDJ:
                 pitch = float(self.pitch)
                 volume = float(self.volume)
                 
-                print(f"DEBUG - Speed: {speed}, Pitch: {pitch}, Volume: {volume}")
+                print(f"DEBUG - Speed: {speed:.2f}x, Pitch: {pitch:.1f}, Volume: {volume:.2f}")
                 
                 # For SfPlayer (MP3 files)
                 if hasattr(self, 'player') and isinstance(self.player, SfPlayer):
-                    # Update the speed ratio using the global speed control
+                    # Update the speed ratio using direct methods
                     try:
-                        # Update the global speed control variable
-                        if hasattr(self, 'g_speed'):
-                            self.g_speed.value = speed
+                        print(f"DEBUG - Setting SfPlayer speed to {speed:.2f}x")
+                        
+                        success = False
+                        
+                        # Method 1: SfPlayer has a direct setSpeed method we can use to control playback speed
+                        # This is the most reliable way to affect playback speed
+                        try:
+                            # Call the direct method to control playback speed
+                            self.player.setSpeed(speed)
+                            print(f"Successfully set SfPlayer speed using setSpeed method")
+                            success = True
+                        except Exception as e:
+                            print(f"setSpeed method failed: {e}")
+                            
+                            # Alternative method: try manipulating the internal _base_objs
+                            try:
+                                # Directly update the playback speed through base objects
+                                if hasattr(self.player, '_base_objs'):
+                                    for obj in self.player._base_objs:
+                                        if hasattr(obj, 'setSpeed'):
+                                            obj.setSpeed(speed)
+                                    print(f"Set speed using _base_objs approach")
+                                    success = True
+                            except Exception as e:
+                                print(f"Base objects approach failed: {e}")
+                        
+                        # Final fallback: recreate the player with new speed if critical
+                        if not success and abs(speed - 1.0) > 0.1:
+                            try:
+                                print("Trying extreme fallback: recreating player with new speed")
+                                # Get current position if possible
+                                current_pos = 0
+                                if hasattr(self.player, 'pos'):
+                                    try:
+                                        current_pos = self.player.pos
+                                    except:
+                                        pass
+                                
+                                # Temporarily store and disconnect harmonizer and reverb
+                                if hasattr(self, 'pitch_shifter'):
+                                    self.pitch_shifter.stop()
+                                if hasattr(self, 'reverb'):
+                                    self.reverb.stop()
+                                
+                                # Create new player with explicit speed param
+                                old_player = self.player
+                                self.player = SfPlayer(self.audio_path, speed=speed, loop=True, 
+                                                      mul=volume, interp=4)
+                                
+                                # Try to set position if we got one
+                                if current_pos > 0:
+                                    try:
+                                        self.player.pos = current_pos
+                                    except:
+                                        pass
+                                
+                                # Reconnect the signal chain
+                                if hasattr(self, 'pitch_shifter'):
+                                    self.pitch_shifter = Harmonizer(self.player, transpo=self.pitch_shifter.transpo, 
+                                                                   mul=volume)
+                                    self.reverb = STRev(self.pitch_shifter, revtime=self.reverb.revtime, 
+                                                      cutoff=self.reverb.cutoff, bal=0.1).out()
+                                
+                                # Stop the old player
+                                old_player.stop()
+                                print("Recreated SfPlayer with new speed")
+                                success = True
+                            except Exception as e:
+                                print(f"Player recreation failed: {e}")
+                        
+                        # Force audio processing to update
+                        self.server.process()
                         
                         self.player.mul = volume
                         if hasattr(self, 'pitch_shifter'):
@@ -219,22 +321,37 @@ class HandDJ:
                 
                 # For TableRead with SndTable (WAV and other formats)
                 if hasattr(self, 'player') and hasattr(self, 'table'):
-                    if hasattr(self.table, 'getRate'):
-                        try:
-                            # Speed affects the playback rate
+                    try:
+                        # Speed affects the playback rate
+                        if hasattr(self, 'base_rate'):
+                            base_rate = self.base_rate
+                        else:
                             base_rate = self.table.getRate()
-                            print(f"DEBUG - Base rate: {base_rate}, New rate: {base_rate * speed}")
-                            self.player.freq = base_rate * speed
                             
-                            # Make sure these changes are reflected in the output
-                            if hasattr(self, 'pitch_shifter'):
-                                # Map pitch to frequency range 60-600Hz
-                                normalized_pitch = (pitch + 12) / 24.0  # Normalize to 0-1
-                                transpo_value = (normalized_pitch * 2 - 1) * 12  # Map to semitone range
-                                self.pitch_shifter.transpo = transpo_value
-                                self.pitch_shifter.mul = volume
-                        except Exception as e:
-                            print(f"TableRead update error: {e}")
+                        new_rate = base_rate * speed
+                        print(f"DEBUG - Base rate: {base_rate}, New rate: {new_rate:.2f}")
+                        
+                        # Update rate control variable
+                        if hasattr(self, 'g_rate'):
+                            print(f"DEBUG - Setting TableRead rate to {new_rate:.2f}")
+                            self.g_rate.value = new_rate
+                        else:
+                            # Fallback for direct frequency setting
+                            self.player.freq = new_rate
+                            print(f"DEBUG - Set TableRead freq directly to {new_rate:.2f}")
+                        
+                        # Force audio processing to update
+                        self.server.process()
+                        
+                        # Make sure these changes are reflected in the output
+                        if hasattr(self, 'pitch_shifter'):
+                            # Map pitch to frequency range 60-600Hz
+                            normalized_pitch = (pitch + 12) / 24.0  # Normalize to 0-1
+                            transpo_value = (normalized_pitch * 2 - 1) * 12  # Map to semitone range
+                            self.pitch_shifter.transpo = transpo_value
+                            self.pitch_shifter.mul = volume
+                    except Exception as e:
+                        print(f"TableRead update error: {e}")
                 
                 # Apply dynamic effects based on parameters
                 if hasattr(self, 'reverb') and isinstance(self.reverb, STRev):
@@ -290,6 +407,9 @@ class HandDJ:
             
             # Clamp between 0.1x and 2.0x
             raw_speed = max(0.1, min(2.0, raw_speed))
+            
+            # Debug print for left hand pinch measurements
+            print(f"LEFT PINCH: dist={left_pinch_dist:.3f}, speed={raw_speed:.2f}x")
             
             # Apply smoothing
             self.speed = self.smooth_value(raw_speed, self.speed_history)
