@@ -596,35 +596,87 @@ class HandDJ:
                         # White color for all elements
                         color = (255, 255, 255)
                         
-                        # Draw circles on finger tips
-                        cv2.circle(image, thumb_pos, 10, color, -1)
-                        cv2.circle(image, index_pos, 10, color, -1)
-                        
-                        # Draw pinch line
-                        cv2.line(image, thumb_pos, index_pos, color, 2)
-                        
-                        # Show pinch distance and coordinates
+                        # Calculate pinch distance
                         pinch_dist = np.linalg.norm(
                             np.array([thumb_tip.x, thumb_tip.y]) - 
                             np.array([index_tip.x, index_tip.y])
                         )
                         
-                        # Display mapped value
+                        # Calculate normalized value for visual feedback
+                        normalized = min(1.0, pinch_dist / self.calibration["pinch_max"])
+                        
+                        # Determine if we're at "normal" levels
                         if handedness == 'Left':
-                            # Map pinch to speed
-                            normalized = min(1.0, pinch_dist / self.calibration["pinch_max"])
+                            # Speed control
                             speed_val = 0.1 + normalized * 1.9
+                            # Check if close to default (1.0)
+                            is_default = abs(speed_val - 1.0) < 0.1
+                            
+                            # Visual feedback based on distance from default
+                            if is_default:
+                                # At or near default - use a special indicator
+                                inner_color = (100, 255, 100)  # Light green for "normal"
+                                outer_size = 14
+                                cv2.circle(image, thumb_pos, outer_size, inner_color, 2)
+                                cv2.circle(image, index_pos, outer_size, inner_color, 2)
+                            else:
+                                # Show how far from default with color intensity
+                                deviation = abs(speed_val - 1.0) / 0.9  # Normalized deviation
+                                
+                                # Blend between white and gold based on deviation
+                                if speed_val < 1.0:
+                                    # Slower than normal - blue hue
+                                    color_intensity = int(200 * deviation) + 55
+                                    inner_color = (color_intensity, 200, 100)  # Bluish
+                                else:
+                                    # Faster than normal - orange hue
+                                    color_intensity = int(200 * deviation) + 55
+                                    inner_color = (50, 150, color_intensity)  # Orangish
+                            
                             value_text = f"Speed: {speed_val:.1f}x"
                         else:
-                            # Map pinch to frequency
-                            normalized = min(1.0, pinch_dist / self.calibration["pinch_max"])
+                            # Pitch control
                             freq_val = 20 + normalized * 580
-                            value_text = f"Pitch: {int(freq_val)}Hz"
+                            # Base frequency when pitch is 0
+                            default_freq = 310  # The middle frequency
                             
-                        # Larger, more visible parameter labels at hand points with white color
+                            # Check if close to default
+                            is_default = abs(freq_val - default_freq) < 40
+                            
+                            # Visual feedback based on distance from default
+                            if is_default:
+                                # At or near default - use a special indicator
+                                inner_color = (100, 255, 100)  # Light green for "normal"
+                                outer_size = 14
+                                cv2.circle(image, thumb_pos, outer_size, inner_color, 2)
+                                cv2.circle(image, index_pos, outer_size, inner_color, 2)
+                            else:
+                                # Show how far from default with color intensity
+                                deviation = min(1.0, abs(freq_val - default_freq) / 290)  # Normalized deviation
+                                
+                                # Blend between white and color based on deviation
+                                if freq_val < default_freq:
+                                    # Lower than normal - purple hue
+                                    color_intensity = int(200 * deviation) + 55
+                                    inner_color = (color_intensity, 100, color_intensity)  # Purplish
+                                else:
+                                    # Higher than normal - yellowish hue
+                                    color_intensity = int(200 * deviation) + 55
+                                    inner_color = (50, color_intensity, color_intensity)  # Yellowish
+                            
+                            value_text = f"Pitch: {int(freq_val)}Hz"
+                        
+                        # Draw circles on finger tips with visual feedback color
+                        cv2.circle(image, thumb_pos, 10, inner_color, -1)
+                        cv2.circle(image, index_pos, 10, inner_color, -1)
+                        
+                        # Draw pinch line with feedback color
+                        cv2.line(image, thumb_pos, index_pos, inner_color, 2)
+                        
+                        # Larger, more visible parameter labels at hand points
                         cv2.putText(image, value_text, 
                                    (thumb_pos[0] - 80, thumb_pos[1] + 40), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
                     
                     # Process hand gestures to update audio parameters
                     self.process_hands(left_hand_landmarks, right_hand_landmarks)
@@ -672,12 +724,62 @@ class HandDJ:
                         normalized = min(1.0, max(0.0, (midpoint_distance - self.calibration["distance_min"]) / 
                                              (self.calibration["distance_max"] - self.calibration["distance_min"])))
                         volume_val = normalized * 10.0
-                        vol_text = f"Volume: {volume_val:.1f}"
                         
-                        # Larger, more visible volume label with white color
+                        # Visual feedback for volume
+                        # Check if close to default (5.0)
+                        is_default_volume = abs(volume_val - 5.0) < 0.5
+                        
+                        if is_default_volume:
+                            # At or near default - use a special color
+                            vol_color = (100, 255, 100)  # Light green for normal
+                            vol_line_width = 3
+                        else:
+                            # Color based on distance from default
+                            deviation = abs(volume_val - 5.0) / 5.0  # How far from middle (normalized)
+                            
+                            if volume_val < 5.0:
+                                # Lower than normal volume - cool color
+                                blue_intensity = int(200 * deviation) + 55
+                                vol_color = (blue_intensity, 150, 100)
+                                vol_line_width = 2
+                            else:
+                                # Higher than normal volume - warm color
+                                red_intensity = int(200 * deviation) + 55 
+                                vol_color = (100, 100, red_intensity)
+                                vol_line_width = int(2 + deviation * 2)  # Thicker line for louder volume
+                        
+                        # Draw the volume line with feedback color
+                        cv2.line(image, left_midpoint, right_midpoint, vol_color, vol_line_width)
+                        
+                        # Draw midpoints with the same color for consistency
+                        cv2.circle(image, left_midpoint, 5, vol_color, -1)
+                        cv2.circle(image, right_midpoint, 5, vol_color, -1)
+                        
+                        vol_text = f"Volume: {volume_val:.1f}"
+                        if is_default_volume:
+                            vol_text += " (Normal)"
+                            
+                        # Larger, more visible volume label with color-matched text
                         cv2.putText(image, vol_text, 
-                                   (mid_x - 70, mid_y - 15), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+                                   (mid_x - 90, mid_y - 15), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, vol_color, 2)
+                        
+                        # Draw a simple audio level indicator
+                        bar_width = 150
+                        bar_height = 10
+                        bar_x = mid_x - bar_width // 2
+                        bar_y = mid_y + 15
+                        
+                        # Draw background bar
+                        cv2.rectangle(image, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (50, 50, 50), -1)
+                        
+                        # Draw volume level
+                        fill_width = int(volume_val / 10.0 * bar_width)
+                        cv2.rectangle(image, (bar_x, bar_y), (bar_x + fill_width, bar_y + bar_height), vol_color, -1)
+                        
+                        # Mark normal position (5.0)
+                        normal_x = bar_x + bar_width // 2
+                        cv2.line(image, (normal_x, bar_y - 3), (normal_x, bar_y + bar_height + 3), (255, 255, 255), 1)
                 else:
                     # Show "No hands detected" when no hands are visible with white color
                     cv2.putText(image, "No hands detected - Show both hands to camera", 
