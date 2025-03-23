@@ -413,6 +413,10 @@ class HandDJ:
         # Track if any parameter has changed significantly
         params_changed = False
         
+        # Store midpoints of pinch lines for volume calculation
+        left_pinch_midpoint = None
+        right_pinch_midpoint = None
+        
         # Process left hand for speed control (thumb-index pinch)
         if left_hand_landmarks:
             left_thumb = np.array([
@@ -423,6 +427,9 @@ class HandDJ:
                 left_hand_landmarks.landmark[8].x,
                 left_hand_landmarks.landmark[8].y
             ])
+            
+            # Calculate midpoint of left pinch line
+            left_pinch_midpoint = (left_thumb + left_index) / 2
             
             # Calculate pinch distance
             left_pinch_dist = np.linalg.norm(left_thumb - left_index)
@@ -466,6 +473,9 @@ class HandDJ:
                 right_hand_landmarks.landmark[8].y
             ])
             
+            # Calculate midpoint of right pinch line
+            right_pinch_midpoint = (right_thumb + right_index) / 2
+            
             # Calculate pinch distance
             right_pinch_dist = np.linalg.norm(right_thumb - right_index)
             
@@ -501,20 +511,10 @@ class HandDJ:
             if abs(self.pitch - old_pitch) > 0.5:
                 params_changed = True
         
-        # Calculate volume based on distance between hands
-        if left_hand_landmarks and right_hand_landmarks:
-            # Use wrist points as reference
-            left_wrist = np.array([
-                left_hand_landmarks.landmark[0].x,
-                left_hand_landmarks.landmark[0].y
-            ])
-            right_wrist = np.array([
-                right_hand_landmarks.landmark[0].x,
-                right_hand_landmarks.landmark[0].y
-            ])
-            
-            # Calculate distance between hands
-            hand_distance = np.linalg.norm(left_wrist - right_wrist)
+        # Calculate volume based on distance between pinch midpoints
+        if left_pinch_midpoint is not None and right_pinch_midpoint is not None:
+            # Calculate distance between pinch midpoints
+            pinch_midpoint_distance = np.linalg.norm(left_pinch_midpoint - right_pinch_midpoint)
             
             # Map distance to volume using calibration data
             dist_min = self.calibration["distance_min"]
@@ -522,7 +522,7 @@ class HandDJ:
             dist_range = max(0.001, dist_max - dist_min)  # Avoid division by zero
             
             # Normalize and map to volume range (0.0 to 10.0)
-            normalized_dist = (hand_distance - dist_min) / dist_range
+            normalized_dist = (pinch_midpoint_distance - dist_min) / dist_range
             raw_volume = max(0.0, min(1.0, normalized_dist)) * 10.0
             
             # Apply smoothing and convert to Python float
@@ -633,26 +633,44 @@ class HandDJ:
                     
                     # If both hands detected, draw a line between them for volume
                     if left_hand_landmarks and right_hand_landmarks:
-                        left_wrist = left_hand_landmarks.landmark[0]
-                        right_wrist = right_hand_landmarks.landmark[0]
+                        # Get thumb and index positions for both hands
+                        left_thumb_tip = left_hand_landmarks.landmark[4]
+                        left_index_tip = left_hand_landmarks.landmark[8]
+                        right_thumb_tip = right_hand_landmarks.landmark[4]
+                        right_index_tip = right_hand_landmarks.landmark[8]
                         
-                        left_pos = (int(left_wrist.x * w), int(left_wrist.y * h))
-                        right_pos = (int(right_wrist.x * w), int(right_wrist.y * h))
+                        h, w, c = image.shape
                         
-                        # Draw line between hands 
-                        cv2.line(image, left_pos, right_pos, (255, 255, 0), 2)
-                        
-                        # Show hand distance
-                        hand_distance = np.linalg.norm(
-                            np.array([left_wrist.x, left_wrist.y]) - 
-                            np.array([right_wrist.x, right_wrist.y])
+                        # Calculate midpoints of pinch lines
+                        left_midpoint = (
+                            int((left_thumb_tip.x + left_index_tip.x) * w / 2),
+                            int((left_thumb_tip.y + left_index_tip.y) * h / 2)
                         )
                         
-                        mid_x = (left_pos[0] + right_pos[0]) // 2
-                        mid_y = (left_pos[1] + right_pos[1]) // 2
+                        right_midpoint = (
+                            int((right_thumb_tip.x + right_index_tip.x) * w / 2),
+                            int((right_thumb_tip.y + right_index_tip.y) * h / 2)
+                        )
+                        
+                        # Draw midpoints
+                        cv2.circle(image, left_midpoint, 5, (255, 255, 0), -1)
+                        cv2.circle(image, right_midpoint, 5, (255, 255, 0), -1)
+                        
+                        # Draw line between midpoints for volume
+                        cv2.line(image, left_midpoint, right_midpoint, (255, 255, 0), 2)
+                        
+                        # Calculate midpoint for volume label
+                        mid_x = (left_midpoint[0] + right_midpoint[0]) // 2
+                        mid_y = (left_midpoint[1] + right_midpoint[1]) // 2
+                        
+                        # Show midpoint distance for volume
+                        midpoint_distance = np.linalg.norm(
+                            np.array([left_midpoint[0], left_midpoint[1]]) / np.array([w, h]) - 
+                            np.array([right_midpoint[0], right_midpoint[1]]) / np.array([w, h])
+                        )
                         
                         # Display volume value based on distance
-                        normalized = min(1.0, max(0.0, (hand_distance - self.calibration["distance_min"]) / 
+                        normalized = min(1.0, max(0.0, (midpoint_distance - self.calibration["distance_min"]) / 
                                              (self.calibration["distance_max"] - self.calibration["distance_min"])))
                         volume_val = normalized * 10.0
                         vol_text = f"Volume: {volume_val:.1f}"
