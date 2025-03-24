@@ -803,7 +803,7 @@ class HandDJ:
         if self.track_change_animation > 0:  # Next track
             # Simplified text
             arrow_text = "NEXT TRACK"
-            arrow_color = (100, 255, 100)  # Light green
+            arrow_color = (255, 255, 255)  # Changed to white
             
             # Arrow start position moves from left to right
             start_x = int(w * 0.1 + progress * w * 0.8)
@@ -811,7 +811,7 @@ class HandDJ:
         else:  # Previous track
             # Simplified text
             arrow_text = "PREV TRACK"
-            arrow_color = (100, 255, 100)  # Light green
+            arrow_color = (255, 255, 255)  # Changed to white
             
             # Arrow start position moves from right to left
             start_x = int(w * 0.9 - progress * w * 0.8)
@@ -821,7 +821,7 @@ class HandDJ:
         
         # Create overlay for text with fade effect
         overlay = image.copy()
-        cv2.putText(overlay, arrow_text, (start_x - 80, h // 2), 
+        cv2.putText(overlay, arrow_text, (start_x - 80, h // 2 - 15), 
                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, arrow_color, 2)
         
         # Blend based on alpha for fade-out effect
@@ -1050,7 +1050,9 @@ class HandDJ:
                                     color_intensity = int(200 * deviation) + 55
                                     inner_color = (50, 150, color_intensity)  # Orangish
                             
-                            value_text = f"Speed: {speed_val:.1f}x"
+                            # Updated display format - title over value
+                            label_text = "SPEED"
+                            value_text = f"{speed_val:.1f}x"
                         else:
                             # Pitch control
                             freq_val = 20 + normalized * 580
@@ -1081,7 +1083,9 @@ class HandDJ:
                                     color_intensity = int(200 * deviation) + 55
                                     inner_color = (50, color_intensity, color_intensity)  # Yellowish
                             
-                            value_text = f"Pitch: {int(freq_val)}Hz"
+                            # Updated display format - title over value
+                            label_text = "PITCH"
+                            value_text = f"{int(freq_val)}Hz"
                         
                         # Draw circles on finger tips with visual feedback color
                         cv2.circle(image, thumb_pos, 10, inner_color, -1)
@@ -1090,9 +1094,14 @@ class HandDJ:
                         # Draw pinch line with feedback color
                         cv2.line(image, thumb_pos, index_pos, inner_color, 2)
                         
-                        # Larger, more visible parameter labels at hand points
-                        cv2.putText(image, value_text, 
-                                   (thumb_pos[0] - 80, thumb_pos[1] + 40), 
+                        # New display with label on top, value underneath
+                        label_pos = (thumb_pos[0] - 70, thumb_pos[1] + 30)
+                        value_pos = (thumb_pos[0] - 70, thumb_pos[1] + 70)  # Increased to 40 unit spacing
+                        
+                        # Draw the label and value
+                        cv2.putText(image, label_text, label_pos, 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                        cv2.putText(image, value_text, value_pos, 
                                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
                     
                     # Process hand gestures to update audio parameters
@@ -1124,9 +1133,6 @@ class HandDJ:
                         cv2.circle(image, left_midpoint, 5, (255, 255, 255), -1)
                         cv2.circle(image, right_midpoint, 5, (255, 255, 255), -1)
                         
-                        # Draw line between midpoints for volume with white color
-                        cv2.line(image, left_midpoint, right_midpoint, (255, 255, 255), 2)
-                        
                         # Draw audio waveform along the volume line
                         self.draw_waveform(image, left_midpoint, right_midpoint)
                         
@@ -1147,27 +1153,32 @@ class HandDJ:
                         
                         # Keep volume line and label white
                         vol_color = (255, 255, 255)  # White for volume
-                        vol_line_width = 2
                         
-                        # Draw the volume line with white color
-                        cv2.line(image, left_midpoint, right_midpoint, vol_color, vol_line_width)
-                        
-                        # Draw midpoints with white color
+                        # Don't draw the volume line anymore
+                        # Only draw the midpoints for volume calculation reference
                         cv2.circle(image, left_midpoint, 5, vol_color, -1)
                         cv2.circle(image, right_midpoint, 5, vol_color, -1)
                         
-                        vol_text = f"Volume: {volume_val:.1f}"
+                        # Updated display format - title over value
+                        vol_label = "VOLUME"
+                        vol_value = f"{volume_val:.1f}"
                         
-                        # Larger, more visible volume label with white text
-                        cv2.putText(image, vol_text, 
-                                   (mid_x - 90, mid_y - 15), 
+                        # Positions for the text - centered above volume bar
+                        label_pos = (mid_x - 40, mid_y - 70)  # Centered text, higher position
+                        value_pos = (mid_x - 15, mid_y - 30)  # Centered value, 40 units lower
+                        
+                        # Draw the label and value
+                        cv2.putText(image, vol_label, label_pos,
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, vol_color, 2)
+                        cv2.putText(image, vol_value, value_pos,
                                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, vol_color, 2)
                         
                         # Draw a simple audio level indicator with white fill
                         bar_width = 150
                         bar_height = 10
                         bar_x = mid_x - bar_width // 2
-                        bar_y = mid_y + 15
+                        # Move bar significantly lower
+                        bar_y = mid_y + 50
                         
                         # Draw background bar
                         cv2.rectangle(image, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (50, 50, 50), -1)
