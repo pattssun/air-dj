@@ -7,9 +7,12 @@ import json
 import os
 import logging
 from pyo import *
+import threading
+import queue
+import random
 
 # Import specific pyo modules for better clarity
-from pyo import Server, SndTable, TableRead, Sine, SfPlayer, Harmonizer, STRev, Mix, SigTo, Sig
+from pyo import Server, SndTable, TableRead, Sine, SfPlayer, Harmonizer, STRev, Mix, SigTo, Sig, PeakAmp
 
 # Disable TensorFlow logging
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=DEBUG, 1=INFO, 2=WARNING, 3=ERROR
@@ -71,6 +74,13 @@ class HandDJ:
             print("Error: Could not open camera.")
             sys.exit(1)
         
+        # For audio analysis and spectrum visualization
+        self.spectrum_data = np.zeros(64)
+        self.amplitude_data = 0.5  # Default amplitude
+        self.last_amplitude_update = time.time()
+        self.peaks = [0.0] * 64  # For peak holding in visualization
+        self.peak_decay = 0.05   # How fast peaks fall
+        
         # For waveform visualization
         self.waveform_buffer = []
         self.waveform_buffer_size = 100
@@ -120,6 +130,13 @@ class HandDJ:
         # Add reverb for better sound
         self.reverb = STRev(self.output, revtime=0.8, cutoff=8000, bal=0.1).out()
         self.audio_path = None
+        
+        # Set up peak detector for amplitude visualization
+        try:
+            self.peak_detector = PeakAmp(self.mixer)
+        except Exception as e:
+            print(f"Could not create peak detector: {e}")
+        
         print("Sine wave synthesizer initialized with speed and pitch controls")
     
     def try_load_audio(self):
@@ -144,6 +161,13 @@ class HandDJ:
                 # Add a high quality reverb for better sound
                 self.reverb = STRev(self.pitch_shifter, revtime=1.0, cutoff=10000, bal=0.1).out()
                 self.output = self.reverb
+                
+                # Set up peak detector for amplitude visualization
+                try:
+                    self.peak_detector = PeakAmp(self.pitch_shifter)
+                except Exception as e:
+                    print(f"Could not create peak detector: {e}")
+                
                 print("Success: Using SfPlayer with enhanced quality")
                 return True
             except Exception as e:
@@ -178,6 +202,12 @@ class HandDJ:
                 # Add a high quality reverb for better sound
                 self.reverb = STRev(self.pitch_shifter, revtime=1.0, cutoff=10000, bal=0.1).out()
                 self.output = self.reverb
+                
+                # Set up peak detector for amplitude visualization
+                try:
+                    self.peak_detector = PeakAmp(self.pitch_shifter)
+                except Exception as e:
+                    print(f"Could not create peak detector: {e}")
                 
                 print("Success: Using SndTable with enhanced quality and speed control")
                 return True
@@ -388,6 +418,9 @@ class HandDJ:
             
             # Update waveform visualization data
             self.update_waveform()
+            
+            # Update visualization data
+            self.update_visualization_data()
             
         except Exception as e:
             print(f"Error updating audio: {e}")
@@ -950,6 +983,221 @@ class HandDJ:
                     glow_alpha = min(0.7, self.waveform_amplitude * 0.5)
                     cv2.addWeighted(glow_img, glow_alpha, image, 1.0, 0, image)
     
+    def update_visualization_data(self):
+        """Update visualization data based on current audio parameters and amplitude"""
+        # Update amplitude data if possible
+        try:
+            if hasattr(self, 'peak_detector') and self.peak_detector is not None:
+                # Only update periodically to avoid too many calls
+                current_time = time.time()
+                if current_time - self.last_amplitude_update > 0.05:  # 20 times per second
+                    self.last_amplitude_update = current_time
+                    amp = self.peak_detector.get()
+                    if amp is not None and isinstance(amp, (int, float)):
+                        # Scale amplitude by volume
+                        self.amplitude_data = amp * (self.volume / 5.0)
+                    else:
+                        # Fallback to volume-based amplitude if detection fails
+                        self.amplitude_data = self.volume / 10.0
+        except Exception as e:
+            # Fallback to volume-based amplitude
+            self.amplitude_data = self.volume / 10.0
+        
+        # Generate spectrum data based on pitch and amplitude
+        # This creates a simulated spectrum that changes with audio parameters
+        try:
+            # Create a new spectrum array
+            new_spectrum = np.zeros(64)
+            
+            # Calculate frequency emphasis based on pitch
+            # Higher pitch = emphasis on higher frequencies
+            pitch_normalized = (self.pitch + 12) / 24.0  # 0 to 1
+            
+            # Create frequency distribution curve
+            if pitch_normalized < 0.5:
+                # Bass heavy (low frequencies emphasized)
+                peak_freq = int(16 * pitch_normalized)  # 0-8
+            else:
+                # Treble heavy (high frequencies emphasized)
+                peak_freq = int(16 + (pitch_normalized - 0.5) * 32)  # 8-24
+            
+            # Create a spectrum with a peak at the calculated frequency
+            for i in range(64):
+                # Distance from peak frequency (with wrapping)
+                dist = min(abs(i - peak_freq), abs(i - peak_freq - 64))
+                
+                # Create a falloff from the peak
+                if dist == 0:
+                    falloff = 1.0
+                else:
+                    falloff = 1.0 / (dist * 0.5) ** 1.2
+                
+                # Set the amplitude value with some randomness for liveliness
+                rand_factor = 0.7 + 0.3 * random.random()
+                
+                # Speed affects the spectral spread (faster = more spread)
+                speed_factor = max(0.5, min(1.5, self.speed))
+                
+                # More energy in the spectrum for higher speeds
+                energy = self.amplitude_data * rand_factor * speed_factor
+                
+                # Set the spectrum value
+                new_spectrum[i] = min(1.0, falloff * energy)
+            
+            # Apply peak holding for smoother visualization
+            for i in range(64):
+                # Decay existing peaks
+                self.peaks[i] = max(0, self.peaks[i] - self.peak_decay)
+                
+                # Update peaks with new data
+                if new_spectrum[i] > self.peaks[i]:
+                    self.peaks[i] = new_spectrum[i]
+                
+                # Use peaks for actual spectrum display
+                self.spectrum_data[i] = self.peaks[i]
+            
+        except Exception as e:
+            print(f"Error generating spectrum: {e}")
+    
+    def draw_spectrum_histogram(self, image, start_point, end_point):
+        """Draw an audio spectrum histogram along the volume line"""
+        h, w, c = image.shape
+        
+        # Calculate line parameters
+        line_vector = np.array(end_point) - np.array(start_point)
+        line_length = np.linalg.norm(line_vector)
+        line_angle = np.arctan2(line_vector[1], line_vector[0])
+        
+        # Skip if line is too short
+        if line_length < 20:
+            return
+        
+        # Number of histogram bars
+        num_bars = min(64, int(line_length / 8))
+        
+        # Calculate bar width and spacing
+        bar_width = max(2, int(line_length / (num_bars * 1.5)))
+        spacing = max(1, int((line_length - bar_width * num_bars) / num_bars))
+        
+        # Resample spectrum data to match number of bars
+        if len(self.spectrum_data) != num_bars:
+            resampled = np.zeros(num_bars)
+            for i in range(num_bars):
+                start_idx = int(i * len(self.spectrum_data) / num_bars)
+                end_idx = int((i + 1) * len(self.spectrum_data) / num_bars)
+                if start_idx < len(self.spectrum_data) and end_idx <= len(self.spectrum_data):
+                    resampled[i] = np.max(self.spectrum_data[start_idx:end_idx])
+            histogram_data = resampled
+        else:
+            histogram_data = self.spectrum_data
+        
+        # Scale histogram data based on current audio parameters
+        max_height = 80.0  # Maximum bar height in pixels
+        
+        # Make bars more dynamic with volume and speed
+        volume_boost = self.volume / 5.0  # Normalize around 1.0
+        speed_impact = self.speed / 1.0  # Normalize around 1.0
+        
+        # Combined scaling factor
+        scale_factor = volume_boost * (0.8 + speed_impact * 0.4)
+        
+        # Create bars
+        for i in range(num_bars):
+            # Position along the line
+            ratio = i / (num_bars - 1)
+            
+            # Calculate bar position (center)
+            center_x = int(start_point[0] + line_vector[0] * ratio)
+            center_y = int(start_point[1] + line_vector[1] * ratio)
+            
+            # Get bar height from spectrum data (scaled)
+            value = min(1.0, histogram_data[i] * scale_factor)
+            bar_height = int(max_height * value)
+            
+            # Calculate bar endpoints (perpendicular to line)
+            perp_angle = line_angle + np.pi/2
+            
+            # Bar grows symmetrically from center line
+            bar_top_x = int(center_x + bar_height * np.cos(perp_angle))
+            bar_top_y = int(center_y + bar_height * np.sin(perp_angle))
+            bar_bottom_x = int(center_x - bar_height * np.cos(perp_angle))
+            bar_bottom_y = int(center_y - bar_height * np.sin(perp_angle))
+            
+            # Create color based on frequency and amplitude
+            # Higher frequencies shift toward red, lower toward blue
+            freq_ratio = i / num_bars
+            amp_ratio = value
+            
+            # Create dynamic color based on frequency
+            if freq_ratio < 0.33:
+                # Blue to cyan
+                r = int(freq_ratio * 3 * 255)
+                g = int(freq_ratio * 3 * 255)
+                b = 255
+            elif freq_ratio < 0.66:
+                # Cyan to yellow
+                r = int((freq_ratio - 0.33) * 3 * 255)
+                g = 255
+                b = int((0.66 - freq_ratio) * 3 * 255)
+            else:
+                # Yellow to red
+                r = 255
+                g = int((1.0 - freq_ratio) * 3 * 255)
+                b = 0
+            
+            # Adjust color intensity based on amplitude
+            intensity = 0.4 + amp_ratio * 0.6
+            r = min(255, int(r * intensity))
+            g = min(255, int(g * intensity))
+            b = min(255, int(b * intensity))
+            
+            # Draw the bar
+            bar_color = (b, g, r)  # BGR for OpenCV
+            
+            # Draw filled rectangle for each bar
+            points = np.array([
+                [center_x - bar_width//2, center_y],
+                [bar_top_x - bar_width//2, bar_top_y],
+                [bar_top_x + bar_width//2, bar_top_y],
+                [center_x + bar_width//2, center_y]
+            ], np.int32)
+            
+            # Draw filled top half
+            cv2.fillPoly(image, [points], bar_color)
+            
+            # Draw bottom half
+            points = np.array([
+                [center_x - bar_width//2, center_y],
+                [bar_bottom_x - bar_width//2, bar_bottom_y],
+                [bar_bottom_x + bar_width//2, bar_bottom_y],
+                [center_x + bar_width//2, center_y]
+            ], np.int32)
+            
+            cv2.fillPoly(image, [points], bar_color)
+            
+            # Add glow effect for higher amplitudes
+            if amp_ratio > 0.7:
+                glow_img = np.zeros_like(image)
+                glow_pts = np.array([
+                    [center_x - bar_width, center_y],
+                    [bar_top_x - bar_width, bar_top_y],
+                    [bar_top_x + bar_width, bar_top_y],
+                    [center_x + bar_width, center_y],
+                    [bar_bottom_x + bar_width, bar_bottom_y],
+                    [bar_bottom_x - bar_width, bar_bottom_y]
+                ], np.int32)
+                
+                cv2.fillPoly(glow_img, [glow_pts], bar_color)
+                
+                # Apply blur for glow effect
+                glow_size = int(5 * amp_ratio)
+                if glow_size > 0:
+                    glow_img = cv2.GaussianBlur(glow_img, (glow_size*2+1, glow_size*2+1), 0)
+                    
+                    # Blend with original image
+                    glow_alpha = min(0.4, amp_ratio * 0.3)
+                    cv2.addWeighted(glow_img, glow_alpha, image, 1.0, 0, image)
+    
     def run(self):
         try:
             print("\nHand DJ started!")
@@ -1133,8 +1381,8 @@ class HandDJ:
                         cv2.circle(image, left_midpoint, 5, (255, 255, 255), -1)
                         cv2.circle(image, right_midpoint, 5, (255, 255, 255), -1)
                         
-                        # Draw audio waveform along the volume line
-                        self.draw_waveform(image, left_midpoint, right_midpoint)
+                        # Draw audio spectrum histogram instead of waveform
+                        self.draw_spectrum_histogram(image, left_midpoint, right_midpoint)
                         
                         # Calculate midpoint for volume label
                         mid_x = (left_midpoint[0] + right_midpoint[0]) // 2
