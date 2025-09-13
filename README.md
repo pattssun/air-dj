@@ -1,4 +1,4 @@
-# Hand DJ
+# Air DJ
 
 Control audio parameters using hand gestures through your webcam!
 
