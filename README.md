@@ -1,10 +1,10 @@
-# Hand DJ
+# Air DJ
 
 Control audio parameters using hand gestures through your webcam!
 
 ## Project Overview
 
-Hand DJ is an interactive application that lets you control music playback parameters using hand gestures tracked by your laptop's webcam. With Hand DJ, you can:
+Air DJ is an interactive application that lets you control music playback parameters using hand gestures tracked by your laptop's webcam. With Air DJ, you can:
 
 - Adjust volume, pitch, and filter effects in real-time
 - Control music using either advanced hand tracking or simple color tracking
@@ -39,8 +39,8 @@ Hand DJ is an interactive application that lets you control music playback param
 
 1. Clone the repository or download the source code:
    ```
-   git clone https://github.com/yourusername/hand-dj.git
-   cd hand-dj
+   git clone https://github.com/yourusername/air-dj.git
+   cd air-dj
    ```
 
 2. Create a virtual environment (recommended):
