@@ -66,29 +66,29 @@ Hand DJ is an interactive application that lets you control music playback param
 
 Run the application in regular mode:
 ```
-python run.py
+python air_dj.py
 ```
 
 Run in simple color tracking mode:
 ```
-python run.py --simple
+python air_dj.py --simple
 ```
 
 Run with a specific song:
 ```
-python run.py --song songname
+python air_dj.py --song songname
 ```
 
 Convert MP3 files to WAV before running:
 ```
-python run.py --convert
+python air_dj.py --convert
 ```
 
 ### Converting MP3 to WAV
 
 If you have trouble with MP3 playback, you can convert your files to WAV format:
 ```
-python convert_mp3.py
+python audio_converter.py
 ```
 
 This requires ffmpeg to be installed on your system.
