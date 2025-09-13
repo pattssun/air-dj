@@ -108,9 +108,9 @@ def select_song(default_song="timeless"):
 
 def convert_mp3_to_wav():
     """Run the MP3 to WAV converter"""
-    convert_script = os.path.join(os.getcwd(), "convert_mp3.py")
+    convert_script = os.path.join(os.getcwd(), "audio_converter.py")
     if not os.path.exists(convert_script):
-        print("Error: convert_mp3.py script not found!")
+        print("Error: audio_converter.py script not found!")
         return
     
     try:
@@ -161,14 +161,14 @@ def main():
     # Launch the appropriate version
     if args.simple:
         print("Starting simple color tracking mode...")
-        from simple_hand_dj import SimpleHandDJ
+        from color_tracking_dj import SimpleHandDJ
         app = SimpleHandDJ(song_path)
         app.setup_audio_player(song_path)
         app.run()
     else:
         print("Starting MediaPipe hand tracking mode...")
         try:
-            from hand_dj import HandDJ
+            from hand_tracking_dj import HandDJ
             app = HandDJ(song_path)
             app.run()
         except Exception as e:
@@ -187,12 +187,12 @@ def main():
             
             if choice == "1":
                 print("\nRetrying with MediaPipe...")
-                from hand_dj import HandDJ
+                from hand_tracking_dj import HandDJ
                 app = HandDJ(song_path)
                 app.run()
             elif choice == "2":
                 print("\nFalling back to simple version...")
-                from simple_hand_dj import SimpleHandDJ
+                from color_tracking_dj import SimpleHandDJ
                 app = SimpleHandDJ(song_path)
                 app.setup_audio_player(song_path)
                 app.run()
