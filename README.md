@@ -46,7 +46,7 @@ Air DJ is an interactive application that lets you control music playback parame
 2. Create a virtual environment (recommended):
    ```
    python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   source venv/bin/activate  # source venv_py311/bin/activate
    ```
 
 3. Install the required dependencies:
