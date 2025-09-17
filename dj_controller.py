@@ -87,6 +87,10 @@ class AudioEngine:
         self.deck1_state = DeckState.STOPPED
         self.deck2_state = DeckState.STOPPED
         
+        # Professional volume control - master volume for each deck
+        self.deck1_master_volume = 0.8  # 0.0 to 1.0 (default 80%)
+        self.deck2_master_volume = 0.8  # 0.0 to 1.0 (default 80%)
+        
         # Professional track position management
         self.deck1_cue_point = 0.0      # Cue point position (default: beginning)
         self.deck2_cue_point = 0.0
@@ -204,14 +208,8 @@ class AudioEngine:
             # Set start time accounting for previous playback
             self.deck2_start_time = current_time - self.deck2_play_position
         
-        # Resume playback by setting volume (players are already running)
-        for stem_type, player in players.items():
-            if active_stems.get(stem_type, True):
-                # Set to full volume if stem is active
-                player.mul = volumes.get(stem_type, 0.7)
-            else:
-                # Mute if stem is inactive
-                player.mul = 0.0
+        # Resume playback by setting volume (players are already running) with master volume
+        self._update_all_stem_volumes(deck)
         
         print(f"Deck {deck} playing from position {self.deck1_play_position if deck == 1 else self.deck2_play_position:.1f}s")
     
@@ -279,14 +277,8 @@ class AudioEngine:
             self.deck2_start_time = current_time  # Reset timing to current
             self.deck2_is_playing = False
         
-        # Play at lower volume for cueing (only active stems)
-        for stem_type, player in players.items():
-            if active_stems.get(stem_type, True):
-                # Reduce volume for cue preview
-                original_vol = volumes.get(stem_type, 0.7)
-                player.mul = original_vol * 0.3  # 30% volume for cue
-            else:
-                player.mul = 0.0
+        # Play at lower volume for cueing (only active stems) with master volume
+        self._update_all_stem_volumes(deck)
         
         print(f"Deck {deck} CUE: jumped to beginning (timing reset)")
     
@@ -321,18 +313,60 @@ class AudioEngine:
         volumes[stem_type] = volume
         
         if stem_type in players:
-            # Apply volume change immediately (NO stop/start, just volume control)
+            # Apply volume change immediately with master volume (NO stop/start, just volume control)
+            master_volume = self.deck1_master_volume if deck == 1 else self.deck2_master_volume
+            
             if is_playing:
-                # Deck is playing - apply volume immediately
-                players[stem_type].mul = volume
+                # Deck is playing - apply volume with master volume
+                final_volume = volume * master_volume if volume > 0 else 0.0
+                players[stem_type].mul = final_volume
             elif current_state == DeckState.CUEING:
-                # Deck is cueing - apply reduced volume immediately
-                players[stem_type].mul = volume * 0.3
+                # Deck is cueing - apply reduced volume with master volume
+                final_volume = volume * master_volume * 0.3 if volume > 0 else 0.0
+                players[stem_type].mul = final_volume
             else:
                 # Deck is stopped/paused - set volume for next play
                 players[stem_type].mul = 0.0  # Keep muted until play
         
         print(f"Deck {deck} {stem_type}: {'ON' if volume > 0 else 'OFF'} (volume control only)")
+    
+    def set_master_volume(self, deck: int, volume: float):
+        """Set the master volume for a deck (0.0 to 1.0) - like Rekordbox volume fader"""
+        volume = max(0.0, min(1.0, volume))  # Clamp between 0.0 and 1.0
+        
+        if deck == 1:
+            self.deck1_master_volume = volume
+        else:
+            self.deck2_master_volume = volume
+        
+        # Update all currently playing stems with new master volume
+        self._update_all_stem_volumes(deck)
+        print(f"Deck {deck} master volume: {volume*100:.0f}%")
+    
+    def _update_all_stem_volumes(self, deck: int):
+        """Update all stem volumes for a deck using current master volume"""
+        players = self.deck1_players if deck == 1 else self.deck2_players
+        volumes = self.deck1_volumes if deck == 1 else self.deck2_volumes
+        active_stems = self.deck1_active_stems if deck == 1 else self.deck2_active_stems
+        is_playing = self.deck1_is_playing if deck == 1 else self.deck2_is_playing
+        current_state = self.deck1_state if deck == 1 else self.deck2_state
+        master_volume = self.deck1_master_volume if deck == 1 else self.deck2_master_volume
+        
+        for stem_type, player in players.items():
+            stem_volume = volumes.get(stem_type, 0.7)
+            stem_active = active_stems.get(stem_type, True)
+            
+            if is_playing and stem_active:
+                # Apply master volume to active stem
+                final_volume = stem_volume * master_volume
+                player.mul = final_volume
+            elif current_state == DeckState.CUEING and stem_active:
+                # Apply master volume to cue preview (reduced)
+                final_volume = stem_volume * master_volume * 0.3
+                player.mul = final_volume
+            else:
+                # Muted
+                player.mul = 0.0
     
     def set_cue_point(self, deck: int, position: float = 0.0):
         """Set the cue point for a deck (default: beginning of track)"""
@@ -598,9 +632,9 @@ class DJController:
             "cfx_r": ControllerButton("CFX", center_x + 50, center_y - 30, 60, 30)
         }
         
-        # Volume faders - centered
-        self.volume_fader_1 = Fader("Vol1", center_x - 70, center_y + 40, 30, 150)
-        self.volume_fader_2 = Fader("Vol2", center_x + 40, center_y + 40, 30, 150)
+        # Volume faders - centered (set initial values to match audio engine)
+        self.volume_fader_1 = Fader("Vol1", center_x - 70, center_y + 40, 30, 150, value=0.8)  # Match deck1_master_volume
+        self.volume_fader_2 = Fader("Vol2", center_x + 40, center_y + 40, 30, 150, value=0.8)   # Match deck2_master_volume
         
         # Crossfader - centered
         self.crossfader = Fader("Crossfader", center_x - 100, center_y + 240, 200, 30, value=0.5)
@@ -670,6 +704,30 @@ class DJController:
         margin = 10
         return (button.x - margin <= x <= button.x + button.width + margin and 
                 button.y - margin <= y <= button.y + button.height + margin)
+    
+    def check_fader_collision(self, x: int, y: int, fader: Fader) -> bool:
+        """Check if coordinates collide with fader (expanded area for easier interaction)"""
+        margin = 15  # Larger margin for faders to make them easier to grab
+        return (fader.x - margin <= x <= fader.x + fader.width + margin and 
+                fader.y - margin <= y <= fader.y + fader.height + margin)
+    
+    def handle_fader_interaction(self, x: int, y: int, fader: Fader, deck: int = 0):
+        """Handle fader drag interaction - convert Y position to fader value"""
+        # Calculate relative position within fader (0.0 at bottom, 1.0 at top)
+        relative_y = (y - fader.y) / fader.height
+        # Invert since fader value 1.0 should be at top (lower Y value)
+        fader_value = max(0.0, min(1.0, 1.0 - relative_y))
+        
+        # Update fader value
+        fader.value = fader_value
+        
+        # Apply to audio engine based on fader type
+        if fader.name == "Vol1":
+            self.audio_engine.set_master_volume(1, fader_value)
+        elif fader.name == "Vol2":
+            self.audio_engine.set_master_volume(2, fader_value)
+        
+        print(f"Volume fader {deck}: {fader_value*100:.0f}%")
     
     def draw_track_visualization(self, overlay, center_x: int, center_y: int):
         """Draw track visualization bars for both decks"""
@@ -777,28 +835,44 @@ class DJController:
         # Check for new pinch interactions with improved detection
         for is_pinched, (x, y) in pinch_data:
             if is_pinched:
-                button_found = False
+                interaction_found = False
                 
-                # Check deck 1 buttons with expanded hit area
-                for button in self.deck1_buttons.values():
-                    if self.check_button_collision_expanded(x, y, button):
-                        button.is_pressed = True
-                        # Only trigger interaction if this is a new press
-                        if not prev_pressed_states.get(id(button), False):
-                            self.handle_button_interaction(button, 1)
-                        button_found = True
-                        break
+                # Check volume faders first (priority over buttons for volume control)
+                if self.check_fader_collision(x, y, self.volume_fader_1):
+                    self.handle_fader_interaction(x, y, self.volume_fader_1, 1)
+                    self.volume_fader_1.is_dragging = True
+                    interaction_found = True
+                elif self.check_fader_collision(x, y, self.volume_fader_2):
+                    self.handle_fader_interaction(x, y, self.volume_fader_2, 2)
+                    self.volume_fader_2.is_dragging = True
+                    interaction_found = True
                 
-                # Check deck 2 buttons with expanded hit area
-                if not button_found:
+                # Check deck 1 buttons with expanded hit area (only if no fader interaction)
+                if not interaction_found:
+                    for button in self.deck1_buttons.values():
+                        if self.check_button_collision_expanded(x, y, button):
+                            button.is_pressed = True
+                            # Only trigger interaction if this is a new press
+                            if not prev_pressed_states.get(id(button), False):
+                                self.handle_button_interaction(button, 1)
+                            interaction_found = True
+                            break
+                
+                # Check deck 2 buttons with expanded hit area (only if no other interaction)
+                if not interaction_found:
                     for button in self.deck2_buttons.values():
                         if self.check_button_collision_expanded(x, y, button):
                             button.is_pressed = True
                             # Only trigger interaction if this is a new press
                             if not prev_pressed_states.get(id(button), False):
                                 self.handle_button_interaction(button, 2)
-                            button_found = True
+                            interaction_found = True
                             break
+        
+        # Reset fader dragging states when no pinch is detected
+        if not any(is_pinched for is_pinched, _ in pinch_data):
+            self.volume_fader_1.is_dragging = False
+            self.volume_fader_2.is_dragging = False
         
         # Handle button releases for momentary buttons
         for buttons in [self.deck1_buttons, self.deck2_buttons]:
@@ -879,15 +953,49 @@ class DJController:
                      (vol_rect[0] + vol_rect[2], vol_rect[1] + vol_rect[3]), (255, 255, 255), 2)
         cv2.putText(overlay, "Volume", (center_x - 25, center_y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
-        # Volume faders
-        for fader in [self.volume_fader_1, self.volume_fader_2]:
+        # Volume faders with professional-style visualization
+        for i, fader in enumerate([self.volume_fader_1, self.volume_fader_2]):
+            deck_num = i + 1
+            
+            # Fader track (background)
             cv2.rectangle(overlay, (fader.x, fader.y), 
-                         (fader.x + fader.width, fader.y + fader.height), (100, 100, 100), -1)
+                         (fader.x + fader.width, fader.y + fader.height), (60, 60, 60), -1)
+            cv2.rectangle(overlay, (fader.x, fader.y), 
+                         (fader.x + fader.width, fader.y + fader.height), (200, 200, 200), 2)
+            
+            # Volume level indicator (filled portion)
+            fill_height = int(fader.height * fader.value)
+            fill_y = fader.y + fader.height - fill_height
+            if fill_height > 0:
+                # Color based on volume level (green for normal, yellow for high, red for max)
+                if fader.value < 0.7:
+                    color = (0, 200, 0)  # Green
+                elif fader.value < 0.9:
+                    color = (0, 200, 200)  # Yellow
+                else:
+                    color = (0, 100, 255)  # Red (near max)
+                
+                cv2.rectangle(overlay, (fader.x + 2, fill_y), 
+                             (fader.x + fader.width - 2, fader.y + fader.height - 2), color, -1)
             
             # Fader handle
             handle_y = int(fader.y + fader.height * (1 - fader.value))
-            cv2.rectangle(overlay, (fader.x - 5, handle_y - 10), 
-                         (fader.x + fader.width + 5, handle_y + 10), (255, 255, 255), -1)
+            handle_color = (255, 255, 100) if fader.is_dragging else (255, 255, 255)
+            cv2.rectangle(overlay, (fader.x - 8, handle_y - 12), 
+                         (fader.x + fader.width + 8, handle_y + 12), handle_color, -1)
+            cv2.rectangle(overlay, (fader.x - 8, handle_y - 12), 
+                         (fader.x + fader.width + 8, handle_y + 12), (0, 0, 0), 2)
+            
+            # Volume percentage label
+            vol_percent = int(fader.value * 100)
+            label_x = fader.x + fader.width + 15
+            label_y = handle_y + 5
+            cv2.putText(overlay, f"{vol_percent}%", (label_x, label_y), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            
+            # Deck label
+            cv2.putText(overlay, f"VOL{deck_num}", (fader.x - 5, fader.y - 10), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
         # Crossfader - using actual fader position
         cf_rect = (self.crossfader.x, self.crossfader.y, self.crossfader.width, self.crossfader.height)
@@ -992,12 +1100,29 @@ class DJController:
                         cv2.circle(frame, (x, y), 10, (0, 255, 0), -1)
                         cv2.putText(frame, "PINCH", (x + 15, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                         
-                        # Show which button is being targeted (if any)
-                        for deck_buttons, deck_name in [(self.deck1_buttons, "D1"), (self.deck2_buttons, "D2")]:
-                            for button_name, button in deck_buttons.items():
-                                if self.check_button_collision_expanded(x, y, button):
-                                    cv2.putText(frame, f"{deck_name}-{button_name}", (x + 15, y + 20), 
-                                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+                        # Show which element is being targeted
+                        target_text = ""
+                        target_color = (0, 255, 255)
+                        
+                        # Check faders first
+                        if self.check_fader_collision(x, y, self.volume_fader_1):
+                            target_text = f"VOL1-{int(self.volume_fader_1.value*100)}%"
+                            target_color = (0, 255, 0)
+                        elif self.check_fader_collision(x, y, self.volume_fader_2):
+                            target_text = f"VOL2-{int(self.volume_fader_2.value*100)}%"
+                            target_color = (0, 255, 0)
+                        
+                        # Check buttons if no fader interaction
+                        if not target_text:
+                            for deck_buttons, deck_name in [(self.deck1_buttons, "D1"), (self.deck2_buttons, "D2")]:
+                                for button_name, button in deck_buttons.items():
+                                    if self.check_button_collision_expanded(x, y, button):
+                                        target_text = f"{deck_name}-{button_name}"
+                                        break
+                        
+                        if target_text:
+                            cv2.putText(frame, target_text, (x + 15, y + 20), 
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, target_color, 1)
                 
                 # Professional status info with deck management details
                 status_y = 30
@@ -1024,17 +1149,21 @@ class DJController:
                     cv2.putText(frame, f"Track 2: {self.deck2_track.name[:30]}", 
                                (10, status_y + 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 
+                # Volume levels
+                vol1_percent = int(self.audio_engine.deck1_master_volume * 100)
+                vol2_percent = int(self.audio_engine.deck2_master_volume * 100)
+                cv2.putText(frame, f"Volume 1: {vol1_percent}% | Volume 2: {vol2_percent}%", 
+                           (10, status_y + 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 255, 100), 1)
+                
                 # Professional DJ behavior info
                 cv2.putText(frame, "CUE: Jumps to beginning | PLAY/PAUSE: Volume control (no restart)", 
-                           (10, status_y + 110), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
-                cv2.putText(frame, "VOCAL/INST: Real-time volume toggle (position maintained)", 
-                           (10, status_y + 130), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
-                cv2.putText(frame, "🎛️ INDEPENDENT TIMING: Each deck has its own timeline", 
-                           (10, status_y + 150), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
-                cv2.putText(frame, "🤏 PRECISE PINCH: Closer fingers = more accurate selection", 
-                           (10, status_y + 170), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
-                cv2.putText(frame, "🎛️ LARGER BUTTONS: Vocal/Instrumental buttons bigger and separated", 
-                           (10, status_y + 190), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
+                           (10, status_y + 135), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+                cv2.putText(frame, "VOCAL/INST: Real-time volume toggle | VOLUME FADERS: Independent deck volume", 
+                           (10, status_y + 155), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+                cv2.putText(frame, "🎛️ INDEPENDENT TIMING & VOLUME: Each deck operates independently", 
+                           (10, status_y + 175), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
+                cv2.putText(frame, "🎚️ PROFESSIONAL VOLUME CONTROL: Drag faders like Rekordbox/Serato", 
+                           (10, status_y + 195), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
                 
                 cv2.putText(frame, "Press 'q' to quit", (10, self.screen_height - 10), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
