@@ -893,7 +893,7 @@ class HandTracker:
         )
         
         # More precise pinch threshold - fingers must be closer together
-        pinch_threshold = 0.04  # Reduced threshold for more precise pinch detection
+        pinch_threshold = 0.035  # Reduced sensitivity - fingers must be quite close to avoid accidental detection
         is_pinched = distance < pinch_threshold
         
         # Calculate pinch position (midpoint) - use actual frame dimensions
@@ -920,8 +920,8 @@ class HandTracker:
             (middle_tip.y - index_tip.y) ** 2
         )
         
-        # Jog wheel pinch threshold (very precise for professional scratching feel)
-        jog_pinch_threshold = 0.025
+        # Jog wheel pinch threshold (slightly more forgiving for easier jog wheel access)
+        jog_pinch_threshold = 0.035
         is_pinched = distance < jog_pinch_threshold
         
         # Calculate pinch position (midpoint) - use actual frame dimensions
@@ -1354,24 +1354,42 @@ class DJController:
             elif self.active_knob:
                 self._update_active_knob(x, y)
             else:
-                # No active slider/knob - check which to grab (priority order)
+                # No active control - immediately check what's under the pinch point
+                interaction_handled = False
+                
+                # Check sliders/faders first (priority order)
                 if self.check_fader_collision(x, y, self.volume_fader_1):
                     self._grab_slider('volume_fader_1', x, y)
+                    self._update_active_slider(x, y)  # Immediately apply effect
+                    interaction_handled = True
                 elif self.check_fader_collision(x, y, self.volume_fader_2):
                     self._grab_slider('volume_fader_2', x, y)
+                    self._update_active_slider(x, y)  # Immediately apply effect
+                    interaction_handled = True
                 elif self.check_crossfader_collision(x, y):
                     self._grab_slider('crossfader', x, y)
+                    self._update_active_slider(x, y)  # Immediately apply effect
+                    interaction_handled = True
                 elif self.check_fader_collision(x, y, self.tempo_fader_1):
                     self._grab_slider('tempo_fader_1', x, y)
+                    self._update_active_slider(x, y)  # Immediately apply effect
+                    interaction_handled = True
                 elif self.check_fader_collision(x, y, self.tempo_fader_2):
                     self._grab_slider('tempo_fader_2', x, y)
+                    self._update_active_slider(x, y)  # Immediately apply effect
+                    interaction_handled = True
                 # Check EQ knobs (only LOW knobs are functional)
                 elif self._check_knob_area(x, y, self.deck1_eq_knobs["low"]):
                     self._grab_knob(self.deck1_eq_knobs["low"], x, y, 1, "low")
+                    self._update_active_knob(x, y)  # Immediately apply effect
+                    interaction_handled = True
                 elif self._check_knob_area(x, y, self.deck2_eq_knobs["low"]):
                     self._grab_knob(self.deck2_eq_knobs["low"], x, y, 2, "low")
-                else:
-                    # No slider/knob collision - check buttons only
+                    self._update_active_knob(x, y)  # Immediately apply effect
+                    interaction_handled = True
+                
+                # If no slider/knob interaction, check buttons
+                if not interaction_handled:
                     self._check_button_interactions(x, y, prev_pressed_states)
         else:
             # No pinch detected - release any active slider or knob
@@ -1393,11 +1411,13 @@ class DJController:
             if self.active_jog:
                 self._update_active_jog_wheel(jog_x, jog_y)
             else:
-                # No active jog wheel - check which jog wheel to grab
+                # No active jog wheel - immediately check what's under the jog pinch point
                 if self._check_jog_wheel_area(jog_x, jog_y, self.jog_wheel_1):
                     self._grab_jog_wheel(self.jog_wheel_1, jog_x, jog_y, 1)
+                    self._update_active_jog_wheel(jog_x, jog_y)  # Immediately apply effect
                 elif self._check_jog_wheel_area(jog_x, jog_y, self.jog_wheel_2):
                     self._grab_jog_wheel(self.jog_wheel_2, jog_x, jog_y, 2)
+                    self._update_active_jog_wheel(jog_x, jog_y)  # Immediately apply effect
         else:
             # No jog pinch detected - release any active jog wheel
             if self.active_jog:
@@ -1497,7 +1517,7 @@ class DJController:
     
     
     def _check_button_interactions(self, x: int, y: int, prev_pressed_states: dict):
-        """Check for button interactions when no slider is active"""
+        """Check for button interactions when no slider is active - immediately apply effects"""
         interaction_found = False
         
         # Check deck 1 buttons
@@ -1505,6 +1525,7 @@ class DJController:
             for button in self.deck1_buttons.values():
                 if self.check_button_collision_expanded(x, y, button):
                     button.is_pressed = True
+                    # Always handle button interaction immediately when pinch connection is made
                     if not prev_pressed_states.get(id(button), False):
                         self.handle_button_interaction(button, 1)
                     interaction_found = True
@@ -1515,10 +1536,13 @@ class DJController:
             for button in self.deck2_buttons.values():
                 if self.check_button_collision_expanded(x, y, button):
                     button.is_pressed = True
+                    # Always handle button interaction immediately when pinch connection is made
                     if not prev_pressed_states.get(id(button), False):
                         self.handle_button_interaction(button, 2)
                     interaction_found = True
                     break
+        
+        return interaction_found
     
     def _handle_button_releases(self, prev_pressed_states: dict):
         """Handle button releases for momentary buttons"""
@@ -2045,6 +2069,77 @@ class DJController:
                 self.audio_engine.deck2_active_stems["instrumental"] = True
                 print(f"Loaded '{track2.name}' into Deck 2 (cue point: beginning)")
     
+    def draw_fingertip_landmarks(self, frame, results):
+        """Draw white fingertip landmarks and transparent distance lines with connection points"""
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                # Get frame dimensions
+                height, width, _ = frame.shape
+                
+                # Define finger tip landmarks (MediaPipe hand landmark indices)
+                THUMB_TIP = 4
+                INDEX_TIP = 8
+                MIDDLE_TIP = 12
+                
+                # Get landmark positions
+                thumb_tip = hand_landmarks.landmark[THUMB_TIP]
+                index_tip = hand_landmarks.landmark[INDEX_TIP]
+                middle_tip = hand_landmarks.landmark[MIDDLE_TIP]
+                
+                # Convert normalized coordinates to pixel coordinates
+                thumb_x = int(thumb_tip.x * width)
+                thumb_y = int(thumb_tip.y * height)
+                index_x = int(index_tip.x * width)
+                index_y = int(index_tip.y * height)
+                middle_x = int(middle_tip.x * width)
+                middle_y = int(middle_tip.y * height)
+                
+                # Calculate distances for pinch detection
+                thumb_index_distance = np.sqrt((thumb_x - index_x)**2 + (thumb_y - index_y)**2)
+                middle_index_distance = np.sqrt((middle_x - index_x)**2 + (middle_y - index_y)**2)
+                
+                # Pinch thresholds (converted from normalized to pixel space)
+                regular_pinch_threshold = 0.035 * width  # Same as in HandTracker
+                jog_pinch_threshold = 0.035 * width     # Same as in HandTracker
+                
+                # Check if any pinch connections are active
+                regular_pinch_active = thumb_index_distance < regular_pinch_threshold
+                jog_pinch_active = middle_index_distance < jog_pinch_threshold
+                any_connection_active = regular_pinch_active or jog_pinch_active
+                
+                # Only show individual dots and lines when NO connections are active
+                if not any_connection_active:
+                    # Draw fingertip points (white)
+                    cv2.circle(frame, (thumb_x, thumb_y), 5, (255, 255, 255), -1)   # White for thumb
+                    cv2.circle(frame, (index_x, index_y), 5, (255, 255, 255), -1)  # White for index
+                    cv2.circle(frame, (middle_x, middle_y), 5, (255, 255, 255), -1) # White for middle
+                    
+                    # Create overlay for transparent lines
+                    overlay = frame.copy()
+                    
+                    # Draw connecting lines (white)
+                    # Thumb to Index (regular pinch)
+                    cv2.line(overlay, (thumb_x, thumb_y), (index_x, index_y), (255, 255, 255), 2)
+                    
+                    # Middle to Index (jog pinch)
+                    cv2.line(overlay, (middle_x, middle_y), (index_x, index_y), (255, 255, 255), 2)
+                    
+                    # Apply transparency to lines (30% opacity)
+                    cv2.addWeighted(overlay, 0.3, frame, 0.7, 0, frame)
+                
+                # Draw bigger white points when fingers are connected (these always show when active)
+                if regular_pinch_active:
+                    # Regular pinch connection point
+                    connect_x = (thumb_x + index_x) // 2
+                    connect_y = (thumb_y + index_y) // 2
+                    cv2.circle(frame, (connect_x, connect_y), 12, (255, 255, 255), -1)
+                
+                if jog_pinch_active:
+                    # Jog pinch connection point
+                    connect_x = (middle_x + index_x) // 2
+                    connect_y = (middle_y + index_y) // 2
+                    cv2.circle(frame, (connect_x, connect_y), 12, (255, 255, 255), -1)
+    
     def run(self):
         """Main loop for the DJ controller"""
         print("=" * 60)
@@ -2081,12 +2176,12 @@ class DJController:
                 # Draw controller overlay
                 frame = self.draw_controller_overlay(frame)
                 
-                # Show pinch points and interaction feedback
+                # Draw fingertip landmarks and distance lines
+                self.draw_fingertip_landmarks(frame, results)
+                
+                # Show pinch feedback on targeted elements
                 for is_pinched, (x, y) in pinch_data:
                     if is_pinched:
-                        cv2.circle(frame, (x, y), 10, (0, 255, 0), -1)
-                        cv2.putText(frame, "PINCH", (x + 15, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                        
                         # Show which element is being targeted
                         target_text = ""
                         target_color = (0, 255, 255)
@@ -2201,80 +2296,9 @@ class DJController:
                             cv2.putText(frame, target_text, (x + 15, y + 20), 
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, target_color, 1)
                 
-                # Show jog pinch points separately
-                for is_jog_pinched, (jog_x, jog_y) in jog_pinch_data:
-                    if is_jog_pinched:
-                        cv2.circle(frame, (jog_x, jog_y), 8, (255, 255, 0), -1)
-                        cv2.putText(frame, "JOG", (jog_x + 10, jog_y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
-                        
-                        # Show jog wheel feedback
-                        if self.active_jog:
-                            jog_text = f"SCRATCH DECK {self.active_jog}" if self.audio_engine.deck1_is_playing or self.audio_engine.deck2_is_playing else f"NAVIGATE DECK {self.active_jog}"
-                            cv2.putText(frame, jog_text, (jog_x + 10, jog_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+                # Jog pinch visualization now handled by draw_fingertip_landmarks
                 
-                # Professional status info with deck management details
-                status_y = 30
-                deck1_info = self.audio_engine.get_deck_info(1)
-                deck2_info = self.audio_engine.get_deck_info(2)
-                
-                # Deck 1 status with professional info
-                deck1_status = f"Deck 1: {deck1_info['state']}"
-                if deck1_info['is_playing']:
-                    deck1_status += " (LIVE)"
-                cv2.putText(frame, deck1_status, (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                
-                # Deck 2 status with professional info  
-                deck2_status = f"Deck 2: {deck2_info['state']}"
-                if deck2_info['is_playing']:
-                    deck2_status += " (LIVE)"
-                cv2.putText(frame, deck2_status, (10, status_y + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                
-                # Crossfader status
-                cf_pos = self.audio_engine.crossfader_position
-                if cf_pos <= 0.1:
-                    cf_status = "Crossfader: DECK 1"
-                    cf_color = (0, 100, 255)
-                elif cf_pos >= 0.9:
-                    cf_status = "Crossfader: DECK 2"
-                    cf_color = (255, 100, 0)
-                else:
-                    cf_status = f"Crossfader: MIX {int(cf_pos*100)}%"
-                    cf_color = (150, 0, 255)
-                cv2.putText(frame, cf_status, (10, status_y + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, cf_color, 2)
-                
-                # Track names
-                if self.deck1_track:
-                    cv2.putText(frame, f"Track 1: {self.deck1_track.name[:30]}", 
-                               (10, status_y + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                if self.deck2_track:
-                    cv2.putText(frame, f"Track 2: {self.deck2_track.name[:30]}", 
-                               (10, status_y + 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                
-                # Volume levels
-                vol1_percent = int(self.audio_engine.deck1_master_volume * 100)
-                vol2_percent = int(self.audio_engine.deck2_master_volume * 100)
-                cv2.putText(frame, f"Volume 1: {vol1_percent}% | Volume 2: {vol2_percent}%", 
-                           (10, status_y + 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 255, 100), 1)
-                
-                
-                # Professional DJ behavior info
-                cv2.putText(frame, "CUE: Jumps to beginning | PLAY/PAUSE: Volume control (no restart)", 
-                           (10, status_y + 175), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
-                cv2.putText(frame, "VOCAL/INST: Real-time volume toggle | VOLUME FADERS: Independent deck volume", 
-                           (10, status_y + 195), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
-                cv2.putText(frame, "🎚️ TEMPO FADERS: Professional pitch/speed control (+/-20%) | CROSSFADER: A/B mixing", 
-                           (10, status_y + 215), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 255), 1)
-                cv2.putText(frame, "🎛️ EQ KNOBS: LOW band EQ (pinch circumference & twist) | HI/MID visual only", 
-                           (10, status_y + 235), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
-                cv2.putText(frame, "🎚️ INTUITIVE CONTROLS: Pinch ON fader/knob to grab, then move freely", 
-                           (10, status_y + 255), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 255), 1)
-                cv2.putText(frame, "🎚️ PROFESSIONAL MIXING: Independent volume, timing, and stem control per deck", 
-                           (10, status_y + 275), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
-                
-                cv2.putText(frame, "Press 'q' to quit", (10, self.screen_height - 10), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                cv2.putText(frame, "🎛️ JOG WHEELS: Middle+Index pinch to grab, rotate to scratch/navigate", 
-                           (10, status_y + 295), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+                # Clean interface - all status text removed for cleaner look
                 
                 # Display frame
                 cv2.imshow('Air DJ Controller', frame)
