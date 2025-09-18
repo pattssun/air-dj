@@ -112,6 +112,12 @@ class AudioEngine:
         # Crossfader mixing - professional DJ crossfader behavior
         self.crossfader_position = 0.5  # 0.0 = full left (deck1), 1.0 = full right (deck2)
         
+        # Professional tempo control - like Rekordbox
+        self.deck1_tempo = 1.0  # 1.0 = normal speed (no change)
+        self.deck2_tempo = 1.0  # Range: 0.8 to 1.2 (+/-20%)
+        self.deck1_bpm = 120  # Original BPM (will be set when track loads)
+        self.deck2_bpm = 120
+        
         # Track which stems are active - only vocal and instrumental for clear isolation
         self.deck1_active_stems = {"vocals": True, "instrumental": True}
         self.deck2_active_stems = {"vocals": True, "instrumental": True}
@@ -270,6 +276,19 @@ class AudioEngine:
                 else:
                     print(f"Warning: {stem_type} not available for this track on deck {deck}")
             
+            # Set original BPM and apply current tempo
+            if deck == 1:
+                self.deck1_bpm = track.bpm
+                current_tempo = self.deck1_tempo
+            else:
+                self.deck2_bpm = track.bpm
+                current_tempo = self.deck2_tempo
+            
+            # Apply current tempo to all loaded players
+            for stem_type, player in players.items():
+                if hasattr(player, 'speed'):
+                    player.speed = current_tempo
+            
             # Reset position tracking and timing
             import time
             current_time = time.time()
@@ -369,6 +388,11 @@ class AudioEngine:
                 # Recreate player at beginning
                 new_player = SfPlayer(file_path, loop=True, mul=0.0)
                 new_player.out()  # Direct output - no EQ
+                
+                # Apply current tempo to new player
+                current_tempo = self.deck1_tempo if deck == 1 else self.deck2_tempo
+                if hasattr(new_player, 'speed'):
+                    new_player.speed = current_tempo
                 
                 players[stem_type] = new_player
         
@@ -487,6 +511,53 @@ class AudioEngine:
             gain = 0.0
         
         return gain
+    
+    def set_tempo(self, deck: int, tempo_value: float):
+        """Set tempo for a deck - professional DJ tempo control like Rekordbox"""
+        # Convert fader value (0.0-1.0) to tempo range (0.8-1.2, +/-20%)
+        # 0.0 = 0.8x speed (-20%), 0.5 = 1.0x speed (normal), 1.0 = 1.2x speed (+20%)
+        tempo = 0.8 + (tempo_value * 0.4)  # Maps 0.0-1.0 to 0.8-1.2
+        tempo = max(0.8, min(1.2, tempo))  # Clamp to safe range
+        
+        if deck == 1:
+            self.deck1_tempo = tempo
+            players = self.deck1_players
+        elif deck == 2:
+            self.deck2_tempo = tempo
+            players = self.deck2_players
+        else:
+            print(f"Invalid deck: {deck}")
+            return
+        
+        # Apply tempo to all active players for this deck
+        for stem_type, player in players.items():
+            if hasattr(player, 'speed'):
+                player.speed = tempo
+        
+        # Calculate current BPM
+        original_bpm = self.deck1_bpm if deck == 1 else self.deck2_bpm
+        current_bpm = original_bpm * tempo
+        
+        # Calculate percentage change
+        percent_change = (tempo - 1.0) * 100
+        
+        print(f"Deck {deck} tempo: {tempo:.2f}x ({percent_change:+.1f}%) | BPM: {current_bpm:.1f}")
+    
+    def get_current_bpm(self, deck: int) -> float:
+        """Get current BPM for a deck (original BPM * tempo)"""
+        if deck == 1:
+            return self.deck1_bpm * self.deck1_tempo
+        elif deck == 2:
+            return self.deck2_bpm * self.deck2_tempo
+        return 120.0
+    
+    def get_tempo_percentage(self, deck: int) -> float:
+        """Get tempo as percentage change from normal speed"""
+        if deck == 1:
+            return (self.deck1_tempo - 1.0) * 100
+        elif deck == 2:
+            return (self.deck2_tempo - 1.0) * 100
+        return 0.0
     
     def _update_all_stem_volumes(self, deck: int):
         """Update all stem volumes for a deck using current master volume"""
@@ -740,6 +811,10 @@ class DJController:
         self.deck1_track = None
         self.deck2_track = None
         
+        # Slider interaction state - for intuitive pinch-to-grab behavior
+        self.active_slider = None  # Which slider is currently grabbed
+        self.slider_grab_offset = 0  # Offset from slider position when grabbed
+        
         # Video capture
         self.cap = cv2.VideoCapture(0)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.screen_width)
@@ -784,9 +859,9 @@ class DJController:
         # Crossfader - centered
         self.crossfader = Fader("Crossfader", center_x - 100, center_y + 240, 200, 30, value=0.5)
         
-        # Tempo controls - centered
-        self.tempo_fader_1 = Fader("Tempo1", center_x - 280, center_y + 40, 20, 120)
-        self.tempo_fader_2 = Fader("Tempo2", center_x + 260, center_y + 40, 20, 120)
+        # Tempo controls - centered (0.5 = normal tempo)
+        self.tempo_fader_1 = Fader("Tempo1", center_x - 280, center_y + 40, 20, 120, value=0.5)
+        self.tempo_fader_2 = Fader("Tempo2", center_x + 260, center_y + 40, 20, 120, value=0.5)
     
     def handle_button_interaction(self, button: ControllerButton, deck: int = 0):
         """Handle button press interactions"""
@@ -983,71 +1058,172 @@ class DJController:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
     
     def process_hand_interactions(self, pinch_data):
-        """Process hand interactions with controller elements"""
+        """Process hand interactions - pinch ON slider to grab, then move freely"""
         # Store previous button states
         prev_pressed_states = {}
         for buttons in [self.deck1_buttons, self.deck2_buttons, self.center_buttons]:
             for button_name, button in buttons.items():
                 prev_pressed_states[id(button)] = button.is_pressed
         
-        # Reset all pressed states
+        # Reset all button pressed states
         for buttons in [self.deck1_buttons, self.deck2_buttons, self.center_buttons]:
             for button in buttons.values():
                 button.is_pressed = False
         
-        # Check for new pinch interactions with improved detection
-        for is_pinched, (x, y) in pinch_data:
-            if is_pinched:
-                interaction_found = False
-                
-                # Check volume faders and crossfader first (priority over buttons for mixing control)
+        # Check if any pinch is active
+        active_pinches = [(x, y) for is_pinched, (x, y) in pinch_data if is_pinched]
+        
+        if active_pinches:
+            # Use the first active pinch for interaction
+            x, y = active_pinches[0]
+            
+            # If we have an active slider, continue controlling it regardless of position
+            if self.active_slider:
+                self._update_active_slider(x, y)
+            else:
+                # No active slider - check which slider to grab (priority order)
                 if self.check_fader_collision(x, y, self.volume_fader_1):
-                    self.handle_fader_interaction(x, y, self.volume_fader_1, 1)
-                    self.volume_fader_1.is_dragging = True
-                    interaction_found = True
+                    self._grab_slider('volume_fader_1', x, y)
                 elif self.check_fader_collision(x, y, self.volume_fader_2):
-                    self.handle_fader_interaction(x, y, self.volume_fader_2, 2)
-                    self.volume_fader_2.is_dragging = True
-                    interaction_found = True
+                    self._grab_slider('volume_fader_2', x, y)
                 elif self.check_crossfader_collision(x, y):
-                    self.handle_crossfader_interaction(x, y)
-                    self.crossfader.is_dragging = True
-                    interaction_found = True
-                
-                # Check deck 1 buttons with expanded hit area (only if no fader interaction)
-                if not interaction_found:
-                    for button in self.deck1_buttons.values():
-                        if self.check_button_collision_expanded(x, y, button):
-                            button.is_pressed = True
-                            # Only trigger interaction if this is a new press
-                            if not prev_pressed_states.get(id(button), False):
-                                self.handle_button_interaction(button, 1)
-                            interaction_found = True
-                            break
-                
-                # Check deck 2 buttons with expanded hit area (only if no other interaction)
-                if not interaction_found:
-                    for button in self.deck2_buttons.values():
-                        if self.check_button_collision_expanded(x, y, button):
-                            button.is_pressed = True
-                            # Only trigger interaction if this is a new press
-                            if not prev_pressed_states.get(id(button), False):
-                                self.handle_button_interaction(button, 2)
-                            interaction_found = True
-                            break
-                
+                    self._grab_slider('crossfader', x, y)
+                elif self.check_fader_collision(x, y, self.tempo_fader_1):
+                    self._grab_slider('tempo_fader_1', x, y)
+                elif self.check_fader_collision(x, y, self.tempo_fader_2):
+                    self._grab_slider('tempo_fader_2', x, y)
+                else:
+                    # No slider collision - check buttons only
+                    self._check_button_interactions(x, y, prev_pressed_states)
+        else:
+            # No pinch detected - release any active slider
+            if self.active_slider:
+                self._release_active_slider()
+            # Still check for button releases
+            self._handle_button_releases(prev_pressed_states)
+    
+    def _grab_slider(self, slider_name: str, x: int, y: int):
+        """Grab a slider for continuous control"""
+        self.active_slider = slider_name
         
-        # Reset fader dragging states when no pinch is detected
-        if not any(is_pinched for is_pinched, _ in pinch_data):
+        # Calculate and store offset for smooth interaction
+        if slider_name == 'volume_fader_1':
+            fader = self.volume_fader_1
+            current_pos = fader.y + (1.0 - fader.value) * fader.height
+            self.slider_grab_offset = y - current_pos
+        elif slider_name == 'volume_fader_2':
+            fader = self.volume_fader_2
+            current_pos = fader.y + (1.0 - fader.value) * fader.height
+            self.slider_grab_offset = y - current_pos
+        elif slider_name == 'crossfader':
+            fader = self.crossfader
+            current_pos = fader.x + fader.value * fader.width
+            self.slider_grab_offset = x - current_pos
+        elif slider_name == 'tempo_fader_1':
+            fader = self.tempo_fader_1
+            current_pos = fader.y + (1.0 - fader.value) * fader.height
+            self.slider_grab_offset = y - current_pos
+        elif slider_name == 'tempo_fader_2':
+            fader = self.tempo_fader_2
+            current_pos = fader.y + (1.0 - fader.value) * fader.height
+            self.slider_grab_offset = y - current_pos
+        
+        # Update the slider immediately
+        self._update_active_slider(x, y)
+    
+    def _update_active_slider(self, x: int, y: int):
+        """Update the currently active slider position"""
+        if self.active_slider == 'volume_fader_1':
+            fader = self.volume_fader_1
+            adjusted_y = y - self.slider_grab_offset
+            relative_y = (adjusted_y - fader.y) / fader.height
+            fader_value = max(0.0, min(1.0, 1.0 - relative_y))
+            fader.value = fader_value
+            fader.is_dragging = True
+            self.audio_engine.set_master_volume(1, fader_value)
+            
+        elif self.active_slider == 'volume_fader_2':
+            fader = self.volume_fader_2
+            adjusted_y = y - self.slider_grab_offset
+            relative_y = (adjusted_y - fader.y) / fader.height
+            fader_value = max(0.0, min(1.0, 1.0 - relative_y))
+            fader.value = fader_value
+            fader.is_dragging = True
+            self.audio_engine.set_master_volume(2, fader_value)
+            
+        elif self.active_slider == 'crossfader':
+            fader = self.crossfader
+            adjusted_x = x - self.slider_grab_offset
+            relative_x = (adjusted_x - fader.x) / fader.width
+            crossfader_value = max(0.0, min(1.0, relative_x))
+            fader.value = crossfader_value
+            fader.is_dragging = True
+            self.audio_engine.set_crossfader_position(crossfader_value)
+            
+        elif self.active_slider == 'tempo_fader_1':
+            fader = self.tempo_fader_1
+            adjusted_y = y - self.slider_grab_offset
+            relative_y = (adjusted_y - fader.y) / fader.height
+            fader_value = max(0.0, min(1.0, 1.0 - relative_y))
+            fader.value = fader_value
+            fader.is_dragging = True
+            self.audio_engine.set_tempo(1, fader_value)
+            
+        elif self.active_slider == 'tempo_fader_2':
+            fader = self.tempo_fader_2
+            adjusted_y = y - self.slider_grab_offset
+            relative_y = (adjusted_y - fader.y) / fader.height
+            fader_value = max(0.0, min(1.0, 1.0 - relative_y))
+            fader.value = fader_value
+            fader.is_dragging = True
+            self.audio_engine.set_tempo(2, fader_value)
+    
+    def _release_active_slider(self):
+        """Release the currently active slider"""
+        if self.active_slider == 'volume_fader_1':
             self.volume_fader_1.is_dragging = False
+        elif self.active_slider == 'volume_fader_2':
             self.volume_fader_2.is_dragging = False
+        elif self.active_slider == 'crossfader':
             self.crossfader.is_dragging = False
+        elif self.active_slider == 'tempo_fader_1':
+            self.tempo_fader_1.is_dragging = False
+        elif self.active_slider == 'tempo_fader_2':
+            self.tempo_fader_2.is_dragging = False
+            
+        self.active_slider = None
+        self.slider_grab_offset = 0
+    
+    
+    def _check_button_interactions(self, x: int, y: int, prev_pressed_states: dict):
+        """Check for button interactions when no slider is active"""
+        interaction_found = False
         
-        # Handle button releases for momentary buttons
+        # Check deck 1 buttons
+        if not interaction_found:
+            for button in self.deck1_buttons.values():
+                if self.check_button_collision_expanded(x, y, button):
+                    button.is_pressed = True
+                    if not prev_pressed_states.get(id(button), False):
+                        self.handle_button_interaction(button, 1)
+                    interaction_found = True
+                    break
+        
+        # Check deck 2 buttons
+        if not interaction_found:
+            for button in self.deck2_buttons.values():
+                if self.check_button_collision_expanded(x, y, button):
+                    button.is_pressed = True
+                    if not prev_pressed_states.get(id(button), False):
+                        self.handle_button_interaction(button, 2)
+                    interaction_found = True
+                    break
+    
+    def _handle_button_releases(self, prev_pressed_states: dict):
+        """Handle button releases for momentary buttons"""
         for buttons in [self.deck1_buttons, self.deck2_buttons]:
             deck = 1 if buttons == self.deck1_buttons else 2
             for button in buttons.values():
-                # If button was pressed before but not now, it's a release
                 if prev_pressed_states.get(id(button), False) and not button.is_pressed:
                     if button.button_type == "momentary":
                         self.handle_button_release(button, deck)
@@ -1215,17 +1391,58 @@ class DJController:
         cv2.putText(overlay, pos_text, (cf_rect[0] + 30, cf_rect[1] - 15), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, track_color, 1)
         
-        # Tempo controls
+        # Tempo controls - Professional DJ style
         for fader, side in [(self.tempo_fader_1, "left"), (self.tempo_fader_2, "right")]:
+            deck_num = 1 if side == "left" else 2
+            
+            # Tempo fader background
+            fader_color = (60, 60, 60)
+            if fader.is_dragging:
+                fader_color = (80, 80, 60)  # Slightly yellow when active
+            
             cv2.rectangle(overlay, (fader.x, fader.y), 
-                         (fader.x + fader.width, fader.y + fader.height), (100, 100, 100), -1)
-            cv2.putText(overlay, "Tempo", (fader.x - 20, fader.y - 10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+                         (fader.x + fader.width, fader.y + fader.height), fader_color, -1)
+            
+            # Tempo fader border
+            cv2.rectangle(overlay, (fader.x, fader.y), 
+                         (fader.x + fader.width, fader.y + fader.height), (150, 150, 150), 2)
+            
+            # Center line (normal tempo)
+            center_y = fader.y + fader.height // 2
+            cv2.line(overlay, (fader.x, center_y), (fader.x + fader.width, center_y), 
+                    (200, 200, 200), 1)
             
             # Tempo handle
             handle_y = int(fader.y + fader.height * (1 - fader.value))
+            handle_color = (255, 255, 255) if not fader.is_dragging else (255, 255, 0)
             cv2.rectangle(overlay, (fader.x - 3, handle_y - 8), 
-                         (fader.x + fader.width + 3, handle_y + 8), (255, 255, 255), -1)
+                         (fader.x + fader.width + 3, handle_y + 8), handle_color, -1)
+            
+            # Tempo value and BPM display
+            tempo_percent = self.audio_engine.get_tempo_percentage(deck_num)
+            current_bpm = self.audio_engine.get_current_bpm(deck_num)
+            
+            # Tempo percentage
+            tempo_text = f"{tempo_percent:+.1f}%"
+            if abs(tempo_percent) < 0.1:
+                tempo_text = "0.0%"
+                tempo_color = (0, 255, 0)  # Green for normal speed
+            elif tempo_percent > 0:
+                tempo_color = (0, 100, 255)  # Blue for faster
+            else:
+                tempo_color = (255, 100, 0)  # Orange for slower
+            
+            cv2.putText(overlay, tempo_text, (fader.x - 25, fader.y - 25), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, tempo_color, 1)
+            
+            # Current BPM
+            bpm_text = f"{current_bpm:.1f}"
+            cv2.putText(overlay, bpm_text, (fader.x - 15, fader.y - 10), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+            
+            # Label
+            cv2.putText(overlay, f"TEMPO{deck_num}", (fader.x - 30, fader.y + fader.height + 15), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
         # Blend overlay with original frame
         cv2.addWeighted(overlay, self.overlay_alpha, frame, 1 - self.overlay_alpha, 0, frame)
@@ -1310,8 +1527,35 @@ class DJController:
                         target_text = ""
                         target_color = (0, 255, 255)
                         
-                        # Check faders first
-                        if self.check_fader_collision(x, y, self.volume_fader_1):
+                        # Check for active slider first (grabbed state takes priority)
+                        if self.active_slider == 'volume_fader_1':
+                            target_text = f"🎚️ GRABBED VOL1-{int(self.volume_fader_1.value*100)}%"
+                            target_color = (255, 255, 0)  # Yellow for grabbed
+                        elif self.active_slider == 'volume_fader_2':
+                            target_text = f"🎚️ GRABBED VOL2-{int(self.volume_fader_2.value*100)}%"
+                            target_color = (255, 255, 0)  # Yellow for grabbed
+                        elif self.active_slider == 'crossfader':
+                            cf_pos = int(self.crossfader.value * 100)
+                            if cf_pos <= 10:
+                                cf_text = "DECK1"
+                            elif cf_pos >= 90:
+                                cf_text = "DECK2"
+                            else:
+                                cf_text = f"MIX-{cf_pos}%"
+                            target_text = f"🎚️ GRABBED CROSSFADER-{cf_text}"
+                            target_color = (255, 255, 0)  # Yellow for grabbed
+                        elif self.active_slider == 'tempo_fader_1':
+                            tempo_percent = self.audio_engine.get_tempo_percentage(1)
+                            current_bpm = self.audio_engine.get_current_bpm(1)
+                            target_text = f"🎚️ GRABBED TEMPO1-{tempo_percent:+.1f}% ({current_bpm:.1f}BPM)"
+                            target_color = (255, 255, 0)  # Yellow for grabbed
+                        elif self.active_slider == 'tempo_fader_2':
+                            tempo_percent = self.audio_engine.get_tempo_percentage(2)
+                            current_bpm = self.audio_engine.get_current_bpm(2)
+                            target_text = f"🎚️ GRABBED TEMPO2-{tempo_percent:+.1f}% ({current_bpm:.1f}BPM)"
+                            target_color = (255, 255, 0)  # Yellow for grabbed
+                        # Check faders for hover (if no active slider)
+                        elif self.check_fader_collision(x, y, self.volume_fader_1):
                             target_text = f"VOL1-{int(self.volume_fader_1.value*100)}%"
                             target_color = (0, 255, 0)
                         elif self.check_fader_collision(x, y, self.volume_fader_2):
@@ -1327,9 +1571,19 @@ class DJController:
                                 cf_text = f"MIX-{cf_pos}%"
                             target_text = f"CROSSFADER-{cf_text}"
                             target_color = (255, 0, 255)  # Purple for crossfader
+                        elif self.check_fader_collision(x, y, self.tempo_fader_1):
+                            tempo_percent = self.audio_engine.get_tempo_percentage(1)
+                            current_bpm = self.audio_engine.get_current_bpm(1)
+                            target_text = f"TEMPO1-{tempo_percent:+.1f}% ({current_bpm:.1f}BPM)"
+                            target_color = (100, 255, 255)  # Cyan for tempo
+                        elif self.check_fader_collision(x, y, self.tempo_fader_2):
+                            tempo_percent = self.audio_engine.get_tempo_percentage(2)
+                            current_bpm = self.audio_engine.get_current_bpm(2)
+                            target_text = f"TEMPO2-{tempo_percent:+.1f}% ({current_bpm:.1f}BPM)"
+                            target_color = (100, 255, 255)  # Cyan for tempo
                         
                         
-                        # Check buttons if no fader or EQ interaction
+                        # Check buttons if no fader interaction
                         if not target_text:
                             for deck_buttons, deck_name in [(self.deck1_buttons, "D1"), (self.deck2_buttons, "D2")]:
                                 for button_name, button in deck_buttons.items():
@@ -1391,8 +1645,12 @@ class DJController:
                            (10, status_y + 175), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
                 cv2.putText(frame, "VOCAL/INST: Real-time volume toggle | VOLUME FADERS: Independent deck volume", 
                            (10, status_y + 195), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+                cv2.putText(frame, "🎚️ TEMPO FADERS: Professional pitch/speed control (+/-20%) | CROSSFADER: A/B mixing", 
+                           (10, status_y + 215), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 255), 1)
+                cv2.putText(frame, "🎚️ INTUITIVE SLIDERS: Pinch ON slider to grab, then move freely", 
+                           (10, status_y + 235), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 255), 1)
                 cv2.putText(frame, "🎚️ PROFESSIONAL MIXING: Independent volume, timing, and stem control per deck", 
-                           (10, status_y + 215), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
+                           (10, status_y + 255), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
                 
                 cv2.putText(frame, "Press 'q' to quit", (10, self.screen_height - 10), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
