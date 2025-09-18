@@ -1713,86 +1713,190 @@ class DJController:
                 print(f"SCRATCH MODE: Released deck {deck}")
             else:
                 print(f"NAVIGATION MODE: Released deck {deck}")
-            
+        
         self.active_jog = None
         self.jog_initial_angle = 0.0
         self.jog_last_angle = 0.0
         self.jog_rotation_speed = 0.0
     
+    def update_jog_wheel_spinning(self):
+        """Update jog wheel spinning based on playback state - realistic DJ controller behavior"""
+        import time
+        
+        # Get current time for smooth rotation calculations
+        current_time = time.time()
+        if not hasattr(self, '_last_jog_update_time'):
+            self._last_jog_update_time = current_time
+            return
+        
+        time_delta = current_time - self._last_jog_update_time
+        self._last_jog_update_time = current_time
+        
+        # Update Deck 1 jog wheel
+        if hasattr(self.audio_engine, 'deck1_is_playing') and self.audio_engine.deck1_is_playing:
+            # Get current tempo multiplier (speed) for realistic spin rate
+            try:
+                tempo_multiplier = self.audio_engine.get_tempo_multiplier(1)
+            except:
+                tempo_multiplier = 1.0
+            
+            # Calculate base rotation speed (degrees per second)
+            # Real jog wheels typically do ~33.33 RPM (200 degrees/second) at normal speed
+            base_rotation_speed = 200.0  # degrees per second
+            actual_rotation_speed = base_rotation_speed * tempo_multiplier
+            
+            # Only update rotation if not being manually controlled
+            if not (self.active_jog == 1 and self.jog_wheel_1.is_touching):
+                rotation_increment = actual_rotation_speed * time_delta
+                self.jog_wheel_1.current_angle += rotation_increment
+                
+                # Keep angle in reasonable range to prevent overflow
+                self.jog_wheel_1.current_angle = self.jog_wheel_1.current_angle % 360
+        
+        # Update Deck 2 jog wheel
+        if hasattr(self.audio_engine, 'deck2_is_playing') and self.audio_engine.deck2_is_playing:
+            # Get current tempo multiplier (speed) for realistic spin rate
+            try:
+                tempo_multiplier = self.audio_engine.get_tempo_multiplier(2)
+            except:
+                tempo_multiplier = 1.0
+            
+            # Calculate base rotation speed (degrees per second)
+            base_rotation_speed = 200.0  # degrees per second
+            actual_rotation_speed = base_rotation_speed * tempo_multiplier
+            
+            # Only update rotation if not being manually controlled
+            if not (self.active_jog == 2 and self.jog_wheel_2.is_touching):
+                rotation_increment = actual_rotation_speed * time_delta
+                self.jog_wheel_2.current_angle += rotation_increment
+                
+                # Keep angle in reasonable range to prevent overflow
+                self.jog_wheel_2.current_angle = self.jog_wheel_2.current_angle % 360
+    
+    def _draw_professional_jog_wheel(self, overlay, jog_wheel, deck_num, label):
+        """Draw a realistic professional DJ controller jog wheel with all the visual elements"""
+        center_x, center_y = jog_wheel.center_x, jog_wheel.center_y
+        radius = jog_wheel.radius
+        
+        # Determine jog wheel state and colors
+        is_playing = (self.audio_engine.deck1_is_playing if deck_num == 1 
+                      else self.audio_engine.deck2_is_playing)
+        is_touching = jog_wheel.is_touching
+        
+        # Professional color scheme based on state
+        if is_touching:
+            main_color = (255, 215, 0)  # Gold when touched
+            inner_color = (255, 255, 100)  # Bright yellow
+            tick_color = (255, 255, 255)  # White ticks
+            label_color = (255, 255, 255)  # White label
+        elif is_playing:
+            main_color = (100, 255, 100)  # Green when playing
+            inner_color = (150, 255, 150)  # Light green
+            tick_color = (200, 255, 200)  # Light green ticks
+            label_color = (255, 255, 255)  # White label
+        else:
+            main_color = (150, 150, 150)  # Gray when stopped
+            inner_color = (100, 100, 100)  # Dark gray
+            tick_color = (200, 200, 200)  # Light gray ticks
+            label_color = (200, 200, 200)  # Gray label
+        
+        # Draw outer ring (main jog wheel body)
+        cv2.circle(overlay, (center_x, center_y), radius, main_color, 4)
+        
+        # Draw inner ring for depth
+        cv2.circle(overlay, (center_x, center_y), radius - 15, inner_color, 2)
+        
+        # Draw center hub
+        cv2.circle(overlay, (center_x, center_y), 25, main_color, -1)
+        cv2.circle(overlay, (center_x, center_y), 25, (255, 255, 255), 2)
+        
+        # Draw rotation tick marks around circumference (like real jog wheels)
+        num_ticks = 24  # Professional jog wheels often have many tick marks
+        for i in range(num_ticks):
+            # Base angle for this tick mark
+            base_angle = (i * 360 / num_ticks) * np.pi / 180
+            
+            # Add current rotation to show spinning
+            actual_angle = base_angle + np.radians(jog_wheel.current_angle)
+            
+            # Calculate tick mark positions
+            tick_outer_radius = radius - 5
+            tick_inner_radius = radius - 20
+            
+            # Every 6th tick is longer (like hour marks on a clock)
+            if i % 6 == 0:
+                tick_inner_radius = radius - 30
+                tick_thickness = 3
+            else:
+                tick_thickness = 1
+            
+            # Calculate tick mark coordinates
+            outer_x = int(center_x + tick_outer_radius * np.cos(actual_angle))
+            outer_y = int(center_y + tick_outer_radius * np.sin(actual_angle))
+            inner_x = int(center_x + tick_inner_radius * np.cos(actual_angle))
+            inner_y = int(center_y + tick_inner_radius * np.sin(actual_angle))
+            
+            # Draw the tick mark
+            cv2.line(overlay, (outer_x, outer_y), (inner_x, inner_y), tick_color, tick_thickness)
+        
+        # Draw main rotation indicator (like the main hand on a clock)
+        rotation_angle = np.radians(jog_wheel.current_angle)
+        rotation_end_x = int(center_x + (radius - 35) * np.cos(rotation_angle))
+        rotation_end_y = int(center_y + (radius - 35) * np.sin(rotation_angle))
+        cv2.line(overlay, (center_x, center_y), (rotation_end_x, rotation_end_y), 
+                 (255, 255, 255), 4)  # White main indicator
+        
+        # Draw track position indicator (shows current playback position)
+        try:
+            position = self.audio_engine.get_playback_position(deck_num)
+            position_angle = position * 2 * np.pi - np.pi/2  # Start from top (12 o'clock)
+            pos_radius = radius - 10
+            pos_x = int(center_x + pos_radius * np.cos(position_angle))
+            pos_y = int(center_y + pos_radius * np.sin(position_angle))
+            
+            # Position indicator color based on state
+            if is_playing:
+                pos_color = (0, 255, 255)  # Cyan when playing
+            else:
+                pos_color = (0, 100, 255)  # Blue when stopped
+            
+            # Draw position indicator as a bright dot
+            cv2.circle(overlay, (pos_x, pos_y), 6, pos_color, -1)
+            cv2.circle(overlay, (pos_x, pos_y), 6, (255, 255, 255), 2)
+        except:
+            pass  # Skip if position can't be determined
+        
+        # Draw deck label in center
+        cv2.putText(overlay, label, (center_x - 30, center_y + 5), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, label_color, 2)
+        
+        # Show interaction feedback text above jog wheel
+        if is_touching:
+            feedback_text = "SCRATCHING" if is_playing else "NAVIGATING"
+            text_color = (255, 255, 0)  # Yellow
+            cv2.putText(overlay, feedback_text, (center_x - 40, center_y - radius - 20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
+        
+        # Show speed indicator when playing
+        if is_playing and not is_touching:
+            try:
+                tempo_multiplier = self.audio_engine.get_tempo_multiplier(deck_num)
+                if tempo_multiplier != 1.0:
+                    speed_text = f"{tempo_multiplier:.2f}x"
+                    speed_color = (100, 255, 255)  # Cyan
+                    cv2.putText(overlay, speed_text, (center_x - 20, center_y - radius - 20), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, speed_color, 2)
+            except:
+                pass
+    
     def draw_controller_overlay(self, frame):
         """Draw the DJ controller overlay on the frame"""
         overlay = frame.copy()
         
-        # Draw jog wheels with track visualization and interaction feedback
-        # Deck 1 jog wheel with position indicator
-        jog1_color = (200, 200, 200)
-        jog1_thickness = 3
+        # Draw professional jog wheels with realistic DJ controller appearance
+        self._draw_professional_jog_wheel(overlay, self.jog_wheel_1, 1, "DECK 1")
         
-        # Highlight jog wheel when being touched
-        if self.jog_wheel_1.is_touching:
-            jog1_color = (255, 255, 0)  # Yellow when touched
-            jog1_thickness = 5
-            
-            # Show scratching indicator
-            if self.audio_engine.deck1_is_playing:
-                cv2.putText(overlay, "SCRATCHING", (self.jog_wheel_1.center_x - 40, self.jog_wheel_1.center_y - 140), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-            else:
-                cv2.putText(overlay, "NAVIGATING", (self.jog_wheel_1.center_x - 45, self.jog_wheel_1.center_y - 140), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-        
-        cv2.circle(overlay, (self.jog_wheel_1.center_x, self.jog_wheel_1.center_y), 
-                  self.jog_wheel_1.radius, jog1_color, jog1_thickness)
-        
-        # Add rotation indicator based on jog wheel rotation
-        rotation_angle1 = np.radians(self.jog_wheel_1.current_angle)
-        rotation_x1 = int(self.jog_wheel_1.center_x + (self.jog_wheel_1.radius - 30) * np.cos(rotation_angle1))
-        rotation_y1 = int(self.jog_wheel_1.center_y + (self.jog_wheel_1.radius - 30) * np.sin(rotation_angle1))
-        cv2.line(overlay, (self.jog_wheel_1.center_x, self.jog_wheel_1.center_y), (rotation_x1, rotation_y1), jog1_color, 3)
-        
-        # Add position indicator on jog wheel
-        position1 = self.audio_engine.get_playback_position(1)
-        angle1 = position1 * 2 * np.pi - np.pi/2  # Start from top
-        pos_x1 = int(self.jog_wheel_1.center_x + (self.jog_wheel_1.radius - 20) * np.cos(angle1))
-        pos_y1 = int(self.jog_wheel_1.center_y + (self.jog_wheel_1.radius - 20) * np.sin(angle1))
-        cv2.circle(overlay, (pos_x1, pos_y1), 8, (0, 255, 0) if self.audio_engine.deck1_is_playing else (100, 100, 255), -1)
-        cv2.putText(overlay, "DECK 1", (self.jog_wheel_1.center_x - 25, self.jog_wheel_1.center_y), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        
-        # Deck 2 jog wheel with position indicator
-        jog2_color = (200, 200, 200)
-        jog2_thickness = 3
-        
-        # Highlight jog wheel when being touched
-        if self.jog_wheel_2.is_touching:
-            jog2_color = (255, 255, 0)  # Yellow when touched
-            jog2_thickness = 5
-            
-            # Show scratching indicator
-            if self.audio_engine.deck2_is_playing:
-                cv2.putText(overlay, "SCRATCHING", (self.jog_wheel_2.center_x - 40, self.jog_wheel_2.center_y - 140), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-            else:
-                cv2.putText(overlay, "NAVIGATING", (self.jog_wheel_2.center_x - 45, self.jog_wheel_2.center_y - 140), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-        
-        cv2.circle(overlay, (self.jog_wheel_2.center_x, self.jog_wheel_2.center_y), 
-                  self.jog_wheel_2.radius, jog2_color, jog2_thickness)
-        
-        # Add rotation indicator based on jog wheel rotation
-        rotation_angle2 = np.radians(self.jog_wheel_2.current_angle)
-        rotation_x2 = int(self.jog_wheel_2.center_x + (self.jog_wheel_2.radius - 30) * np.cos(rotation_angle2))
-        rotation_y2 = int(self.jog_wheel_2.center_y + (self.jog_wheel_2.radius - 30) * np.sin(rotation_angle2))
-        cv2.line(overlay, (self.jog_wheel_2.center_x, self.jog_wheel_2.center_y), (rotation_x2, rotation_y2), jog2_color, 3)
-        
-        # Add position indicator on jog wheel
-        position2 = self.audio_engine.get_playback_position(2)
-        angle2 = position2 * 2 * np.pi - np.pi/2  # Start from top
-        pos_x2 = int(self.jog_wheel_2.center_x + (self.jog_wheel_2.radius - 20) * np.cos(angle2))
-        pos_y2 = int(self.jog_wheel_2.center_y + (self.jog_wheel_2.radius - 20) * np.sin(angle2))
-        cv2.circle(overlay, (pos_x2, pos_y2), 8, (0, 255, 0) if self.audio_engine.deck2_is_playing else (100, 100, 255), -1)
-        cv2.putText(overlay, "DECK 2", (self.jog_wheel_2.center_x - 25, self.jog_wheel_2.center_y), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        self._draw_professional_jog_wheel(overlay, self.jog_wheel_2, 2, "DECK 2")
         
         # Draw buttons
         for deck_buttons, deck_name in [(self.deck1_buttons, "Deck 1"), (self.deck2_buttons, "Deck 2")]:
@@ -2172,6 +2276,9 @@ class DJController:
                 
                 # Process interactions with both pinch types
                 self.process_hand_interactions(pinch_data, jog_pinch_data)
+                
+                # Update jog wheel spinning based on playback state (realistic DJ behavior)
+                self.update_jog_wheel_spinning()
                 
                 # Draw controller overlay
                 frame = self.draw_controller_overlay(frame)
