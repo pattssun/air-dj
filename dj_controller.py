@@ -91,6 +91,7 @@ class AudioEngine:
         self.deck1_master_volume = 0.8  # 0.0 to 1.0 (default 80%)
         self.deck2_master_volume = 0.8  # 0.0 to 1.0 (default 80%)
         
+        
         # Professional track position management
         self.deck1_cue_point = 0.0      # Cue point position (default: beginning)
         self.deck2_cue_point = 0.0
@@ -108,7 +109,9 @@ class AudioEngine:
         self.deck1_last_pause = 0.0     # When deck 1 was last paused
         self.deck2_last_pause = 0.0     # When deck 2 was last paused
         
-        self.crossfader_value = 0.5
+        # Crossfader mixing - professional DJ crossfader behavior
+        self.crossfader_position = 0.5  # 0.0 = full left (deck1), 1.0 = full right (deck2)
+        
         # Track which stems are active - only vocal and instrumental for clear isolation
         self.deck1_active_stems = {"vocals": True, "instrumental": True}
         self.deck2_active_stems = {"vocals": True, "instrumental": True}
@@ -119,14 +122,116 @@ class AudioEngine:
         
         self.setup_audio()
     
-    def setup_audio(self):
-        """Initialize the audio server"""
+    def setup_audio(self, preferred_device=None):
+        """Initialize the audio server for Mac with device selection"""
         try:
-            self.server = Server().boot()
+            # Get available devices first
+            devices = []
+            device_info = {}
+            try:
+                from pyo import pa_list_devices, pa_get_output_devices
+                print("🔍 Available audio devices:")
+                pa_list_devices()
+                
+                # Get output devices specifically
+                output_devices = pa_get_output_devices()
+                for device in output_devices:
+                    device_id = device[0]  # Device ID
+                    device_name = device[1]  # Device name is at index 1
+                    devices.append((device_id, device_name))
+                    device_info[device_id] = device_name
+                    
+            except Exception as device_error:
+                print(f"Device enumeration: {device_error}")
+            
+            # Let user choose device if multiple outputs available
+            output_device = None
+            if len(devices) > 1:
+                print(f"\n🎧 Found {len(devices)} output devices:")
+                for i, (dev_id, dev_name) in enumerate(devices):
+                    marker = " ← BUILT-IN" if "MacBook" in dev_name and "Speakers" in dev_name else ""
+                    marker = " ← AIRPODS" if "AirPods" in dev_name else marker
+                    print(f"   {i}: {dev_name}{marker}")
+                
+                # Try to use MacBook speakers by default (most reliable)
+                macbook_speakers = None
+                for dev_id, dev_name in devices:
+                    if "MacBook" in dev_name and "Speakers" in dev_name:
+                        macbook_speakers = dev_id
+                        break
+                
+                if macbook_speakers is not None:
+                    output_device = macbook_speakers
+                    print(f"🔊 Auto-selected: {device_info[macbook_speakers]} (built-in speakers)")
+                else:
+                    # Check for AirPods and warn user
+                    airpods_device = None
+                    for dev_id, dev_name in devices:
+                        if "AirPods" in dev_name:
+                            airpods_device = dev_id
+                            break
+                    
+                    if airpods_device is not None:
+                        print(f"⚠️  AUDIO ROUTING TO AIRPODS: {device_info[airpods_device]}")
+                        print("💡 If you can't hear audio:")
+                        print("   • Check your AirPods are connected")
+                        print("   • Or disconnect AirPods to use MacBook speakers")
+                        output_device = airpods_device
+                    else:
+                        # Use first device
+                        output_device = devices[0][0]
+                        print(f"🔊 Using: {device_info[output_device]}")
+                    
+            # Configure server with specific device
+            if output_device is not None:
+                self.server = Server(
+                    sr=44100,
+                    nchnls=2,
+                    buffersize=512,
+                    duplex=0,
+                    audio='portaudio',
+                    jackname='',
+                    ichnls=0,  # No input channels
+                    )
+                # Set output device after creation
+                try:
+                    self.server.setOutputDevice(output_device)
+                    print(f"✅ Set output device to: {device_info[output_device]}")
+                except:
+                    print("⚠️  Could not set specific device, using default")
+            else:
+                # Default configuration
+                self.server = Server(
+                    sr=44100,
+                    nchnls=2,
+                    buffersize=512,
+                    duplex=0,
+                    audio='portaudio'
+                )
+            
+            # Boot and start the server
+            self.server.boot()
             self.server.start()
-            print("Audio server initialized")
+            print("✅ Audio server initialized")
+            print(f"   Sample Rate: {self.server.getSamplingRate()}Hz")
+            print(f"   Channels: {self.server.getNchnls()}")
+            print(f"   Buffer Size: {self.server.getBufferSize()}")
+            
         except Exception as e:
-            print(f"Error initializing audio: {e}")
+            print(f"❌ Error initializing audio: {e}")
+            print("🔧 Trying basic audio configuration...")
+            
+            # Very basic fallback
+            try:
+                self.server = Server(sr=44100, nchnls=2)
+                self.server.boot()
+                self.server.start()
+                print("✅ Basic audio server started")
+            except Exception as fallback_error:
+                print(f"❌ All audio configurations failed: {fallback_error}")
+                self.server = None
+    
+    
     
     def load_track(self, deck: int, track: Track):
         """Load a track into the specified deck - only vocal and instrumental for clear isolation"""
@@ -155,7 +260,8 @@ class AudioEngine:
                     if os.path.exists(file_path):
                         # Create player and immediately start it (but at 0 volume initially)
                         player = SfPlayer(file_path, loop=True, mul=0.0)
-                        player.out()  # Start playing immediately at 0 volume
+                        player.out()  # Direct output - no EQ chain
+                        
                         players[stem_type] = player
                         volumes[stem_type] = 0.7  # Default volume
                         print(f"Loaded {stem_type} for deck {deck}")
@@ -262,7 +368,8 @@ class AudioEngine:
             if file_path and os.path.exists(file_path):
                 # Recreate player at beginning
                 new_player = SfPlayer(file_path, loop=True, mul=0.0)
-                new_player.out()
+                new_player.out()  # Direct output - no EQ
+                
                 players[stem_type] = new_player
         
         # Reset timing and set cue state
@@ -316,17 +423,19 @@ class AudioEngine:
             # Apply volume change immediately with master volume (NO stop/start, just volume control)
             master_volume = self.deck1_master_volume if deck == 1 else self.deck2_master_volume
             
+            # Calculate final volume
             if is_playing:
                 # Deck is playing - apply volume with master volume
                 final_volume = volume * master_volume if volume > 0 else 0.0
-                players[stem_type].mul = final_volume
             elif current_state == DeckState.CUEING:
                 # Deck is cueing - apply reduced volume with master volume
                 final_volume = volume * master_volume * 0.3 if volume > 0 else 0.0
-                players[stem_type].mul = final_volume
             else:
                 # Deck is stopped/paused - set volume for next play
-                players[stem_type].mul = 0.0  # Keep muted until play
+                final_volume = 0.0
+            
+            # Apply volume directly to player
+            players[stem_type].mul = final_volume
         
         print(f"Deck {deck} {stem_type}: {'ON' if volume > 0 else 'OFF'} (volume control only)")
     
@@ -343,6 +452,42 @@ class AudioEngine:
         self._update_all_stem_volumes(deck)
         print(f"Deck {deck} master volume: {volume*100:.0f}%")
     
+    def set_crossfader_position(self, position: float):
+        """Set crossfader position - professional DJ crossfader mixing"""
+        position = max(0.0, min(1.0, position))  # Clamp to valid range
+        self.crossfader_position = position
+        
+        # Update both decks to apply crossfader mixing
+        self._update_all_stem_volumes(1)
+        self._update_all_stem_volumes(2)
+        
+        # Optional: print crossfader position for debugging
+        if position <= 0.1:
+            position_text = "DECK1"
+        elif position >= 0.9:
+            position_text = "DECK2"
+        else:
+            position_text = f"MIX-{int(position*100)}%"
+        print(f"Crossfader: {position_text}")
+    
+    def _calculate_crossfader_gain(self, deck: int) -> float:
+        """Calculate crossfader gain for a deck using professional power curve"""
+        # Professional DJ crossfader uses a power curve for smooth mixing
+        # 0.0 = full left (deck1), 1.0 = full right (deck2)
+        
+        if deck == 1:
+            # Deck 1: Full volume at position 0.0, silent at position 1.0
+            # Use power curve for smooth transition
+            gain = (1.0 - self.crossfader_position) ** 0.5
+        elif deck == 2:
+            # Deck 2: Silent at position 0.0, full volume at position 1.0  
+            # Use power curve for smooth transition
+            gain = self.crossfader_position ** 0.5
+        else:
+            gain = 0.0
+        
+        return gain
+    
     def _update_all_stem_volumes(self, deck: int):
         """Update all stem volumes for a deck using current master volume"""
         players = self.deck1_players if deck == 1 else self.deck2_players
@@ -356,17 +501,23 @@ class AudioEngine:
             stem_volume = volumes.get(stem_type, 0.7)
             stem_active = active_stems.get(stem_type, True)
             
+            # Calculate final volume
             if is_playing and stem_active:
                 # Apply master volume to active stem
                 final_volume = stem_volume * master_volume
-                player.mul = final_volume
             elif current_state == DeckState.CUEING and stem_active:
                 # Apply master volume to cue preview (reduced)
                 final_volume = stem_volume * master_volume * 0.3
-                player.mul = final_volume
             else:
                 # Muted
-                player.mul = 0.0
+                final_volume = 0.0
+            
+            # Apply crossfader gain - professional DJ mixing
+            crossfader_gain = self._calculate_crossfader_gain(deck)
+            final_volume *= crossfader_gain
+            
+            # Apply volume directly to player
+            player.mul = final_volume
     
     def set_cue_point(self, deck: int, position: float = 0.0):
         """Set the cue point for a deck (default: beginning of track)"""
@@ -620,14 +771,8 @@ class DJController:
             "instrumental": ControllerButton("Instrumental", center_x + 240, center_y + 210, 120, 45, button_type="toggle")
         }
         
-        # Center controls - centered around middle
+        # Center controls (effects, etc.)
         self.center_buttons = {
-            "hi_l": ControllerButton("Hi", center_x - 110, center_y - 150, 60, 30),
-            "hi_r": ControllerButton("Hi", center_x + 50, center_y - 150, 60, 30),
-            "mid_l": ControllerButton("Mid", center_x - 110, center_y - 110, 60, 30),
-            "mid_r": ControllerButton("Mid", center_x + 50, center_y - 110, 60, 30),
-            "low_l": ControllerButton("Low", center_x - 110, center_y - 70, 60, 30),
-            "low_r": ControllerButton("Low", center_x + 50, center_y - 70, 60, 30),
             "cfx_l": ControllerButton("CFX", center_x - 110, center_y - 30, 60, 30),
             "cfx_r": ControllerButton("CFX", center_x + 50, center_y - 30, 60, 30)
         }
@@ -728,6 +873,24 @@ class DJController:
             self.audio_engine.set_master_volume(2, fader_value)
         
         print(f"Volume fader {deck}: {fader_value*100:.0f}%")
+    
+    def handle_crossfader_interaction(self, x: int, y: int):
+        """Handle crossfader drag interaction - convert X position to crossfader value"""
+        # Calculate relative position within crossfader (0.0 at left, 1.0 at right)
+        relative_x = (x - self.crossfader.x) / self.crossfader.width
+        crossfader_value = max(0.0, min(1.0, relative_x))
+        
+        # Update crossfader value
+        self.crossfader.value = crossfader_value
+        
+        # Apply to audio engine
+        self.audio_engine.set_crossfader_position(crossfader_value)
+    
+    def check_crossfader_collision(self, x: int, y: int) -> bool:
+        """Check if coordinates collide with crossfader (expanded area for easier interaction)"""
+        margin = 15  # Larger margin for easier interaction
+        return (self.crossfader.x - margin <= x <= self.crossfader.x + self.crossfader.width + margin and 
+                self.crossfader.y - margin <= y <= self.crossfader.y + self.crossfader.height + margin)
     
     def draw_track_visualization(self, overlay, center_x: int, center_y: int):
         """Draw track visualization bars for both decks"""
@@ -837,7 +1000,7 @@ class DJController:
             if is_pinched:
                 interaction_found = False
                 
-                # Check volume faders first (priority over buttons for volume control)
+                # Check volume faders and crossfader first (priority over buttons for mixing control)
                 if self.check_fader_collision(x, y, self.volume_fader_1):
                     self.handle_fader_interaction(x, y, self.volume_fader_1, 1)
                     self.volume_fader_1.is_dragging = True
@@ -845,6 +1008,10 @@ class DJController:
                 elif self.check_fader_collision(x, y, self.volume_fader_2):
                     self.handle_fader_interaction(x, y, self.volume_fader_2, 2)
                     self.volume_fader_2.is_dragging = True
+                    interaction_found = True
+                elif self.check_crossfader_collision(x, y):
+                    self.handle_crossfader_interaction(x, y)
+                    self.crossfader.is_dragging = True
                     interaction_found = True
                 
                 # Check deck 1 buttons with expanded hit area (only if no fader interaction)
@@ -868,11 +1035,13 @@ class DJController:
                                 self.handle_button_interaction(button, 2)
                             interaction_found = True
                             break
+                
         
         # Reset fader dragging states when no pinch is detected
         if not any(is_pinched for is_pinched, _ in pinch_data):
             self.volume_fader_1.is_dragging = False
             self.volume_fader_2.is_dragging = False
+            self.crossfader.is_dragging = False
         
         # Handle button releases for momentary buttons
         for buttons in [self.deck1_buttons, self.deck2_buttons]:
@@ -932,7 +1101,7 @@ class DJController:
                 cv2.putText(overlay, button.name, (text_x, text_y), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, button.text_color, 1)
         
-        # Draw center EQ controls using actual button positions
+        # Draw center controls (effects, etc.)
         center_x = self.screen_width // 2
         center_y = self.screen_height // 2
         
@@ -997,17 +1166,54 @@ class DJController:
             cv2.putText(overlay, f"VOL{deck_num}", (fader.x - 5, fader.y - 10), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
-        # Crossfader - using actual fader position
+        # Crossfader - Professional DJ controller style
         cf_rect = (self.crossfader.x, self.crossfader.y, self.crossfader.width, self.crossfader.height)
+        
+        # Crossfader track background
         cv2.rectangle(overlay, (cf_rect[0], cf_rect[1]), 
-                     (cf_rect[0] + cf_rect[2], cf_rect[1] + cf_rect[3]), (100, 100, 100), -1)
-        cv2.putText(overlay, "Crossfader", (cf_rect[0] + 50, cf_rect[1] - 10), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                     (cf_rect[0] + cf_rect[2], cf_rect[1] + cf_rect[3]), (60, 60, 60), -1)
+        
+        # Crossfader position indicators
+        cf_pos = self.crossfader.value
+        
+        # Color coding for crossfader position
+        if cf_pos <= 0.1:
+            # Full Deck 1
+            track_color = (0, 100, 255)  # Blue for Deck 1
+            pos_text = "DECK 1"
+        elif cf_pos >= 0.9:
+            # Full Deck 2  
+            track_color = (255, 100, 0)  # Orange for Deck 2
+            pos_text = "DECK 2"
+        else:
+            # Mixed
+            track_color = (150, 0, 255)  # Purple for mix
+            pos_text = f"MIX {int(cf_pos*100)}%"
+        
+        # Draw crossfader track with position color
+        cv2.rectangle(overlay, (cf_rect[0], cf_rect[1]), 
+                     (cf_rect[0] + cf_rect[2], cf_rect[1] + cf_rect[3]), track_color, 2)
+        
+        # Crossfader labels
+        cv2.putText(overlay, "A", (cf_rect[0] - 15, cf_rect[1] + cf_rect[3] + 20), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 100, 255), 2)  # Deck 1 label
+        cv2.putText(overlay, "B", (cf_rect[0] + cf_rect[2] + 5, cf_rect[1] + cf_rect[3] + 20), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 100, 0), 2)  # Deck 2 label
         
         # Crossfader handle
-        handle_x = int(cf_rect[0] + cf_rect[2] * self.crossfader.value)
-        cv2.rectangle(overlay, (handle_x - 10, cf_rect[1] - 5), 
-                     (handle_x + 10, cf_rect[1] + cf_rect[3] + 5), (255, 255, 255), -1)
+        handle_x = int(cf_rect[0] + cf_rect[2] * cf_pos)
+        handle_color = (255, 255, 255) if not self.crossfader.is_dragging else (255, 255, 0)
+        cv2.rectangle(overlay, (handle_x - 8, cf_rect[1] - 3), 
+                     (handle_x + 8, cf_rect[1] + cf_rect[3] + 3), handle_color, -1)
+        
+        # Center position indicator
+        center_x = cf_rect[0] + cf_rect[2] // 2
+        cv2.line(overlay, (center_x, cf_rect[1] - 5), (center_x, cf_rect[1] + cf_rect[3] + 5), 
+                (200, 200, 200), 1)
+        
+        # Crossfader position text
+        cv2.putText(overlay, pos_text, (cf_rect[0] + 30, cf_rect[1] - 15), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, track_color, 1)
         
         # Tempo controls
         for fader, side in [(self.tempo_fader_1, "left"), (self.tempo_fader_2, "right")]:
@@ -1111,8 +1317,19 @@ class DJController:
                         elif self.check_fader_collision(x, y, self.volume_fader_2):
                             target_text = f"VOL2-{int(self.volume_fader_2.value*100)}%"
                             target_color = (0, 255, 0)
+                        elif self.check_crossfader_collision(x, y):
+                            cf_pos = int(self.crossfader.value * 100)
+                            if cf_pos <= 10:
+                                cf_text = "DECK1"
+                            elif cf_pos >= 90:
+                                cf_text = "DECK2"
+                            else:
+                                cf_text = f"MIX-{cf_pos}%"
+                            target_text = f"CROSSFADER-{cf_text}"
+                            target_color = (255, 0, 255)  # Purple for crossfader
                         
-                        # Check buttons if no fader interaction
+                        
+                        # Check buttons if no fader or EQ interaction
                         if not target_text:
                             for deck_buttons, deck_name in [(self.deck1_buttons, "D1"), (self.deck2_buttons, "D2")]:
                                 for button_name, button in deck_buttons.items():
@@ -1141,13 +1358,26 @@ class DJController:
                     deck2_status += " (LIVE)"
                 cv2.putText(frame, deck2_status, (10, status_y + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 
+                # Crossfader status
+                cf_pos = self.audio_engine.crossfader_position
+                if cf_pos <= 0.1:
+                    cf_status = "Crossfader: DECK 1"
+                    cf_color = (0, 100, 255)
+                elif cf_pos >= 0.9:
+                    cf_status = "Crossfader: DECK 2"
+                    cf_color = (255, 100, 0)
+                else:
+                    cf_status = f"Crossfader: MIX {int(cf_pos*100)}%"
+                    cf_color = (150, 0, 255)
+                cv2.putText(frame, cf_status, (10, status_y + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, cf_color, 2)
+                
                 # Track names
                 if self.deck1_track:
                     cv2.putText(frame, f"Track 1: {self.deck1_track.name[:30]}", 
-                               (10, status_y + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                               (10, status_y + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 if self.deck2_track:
                     cv2.putText(frame, f"Track 2: {self.deck2_track.name[:30]}", 
-                               (10, status_y + 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                               (10, status_y + 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 
                 # Volume levels
                 vol1_percent = int(self.audio_engine.deck1_master_volume * 100)
@@ -1155,15 +1385,14 @@ class DJController:
                 cv2.putText(frame, f"Volume 1: {vol1_percent}% | Volume 2: {vol2_percent}%", 
                            (10, status_y + 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 255, 100), 1)
                 
+                
                 # Professional DJ behavior info
                 cv2.putText(frame, "CUE: Jumps to beginning | PLAY/PAUSE: Volume control (no restart)", 
-                           (10, status_y + 135), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+                           (10, status_y + 175), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
                 cv2.putText(frame, "VOCAL/INST: Real-time volume toggle | VOLUME FADERS: Independent deck volume", 
-                           (10, status_y + 155), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
-                cv2.putText(frame, "🎛️ INDEPENDENT TIMING & VOLUME: Each deck operates independently", 
-                           (10, status_y + 175), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
-                cv2.putText(frame, "🎚️ PROFESSIONAL VOLUME CONTROL: Drag faders like Rekordbox/Serato", 
-                           (10, status_y + 195), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
+                           (10, status_y + 195), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+                cv2.putText(frame, "🎚️ PROFESSIONAL MIXING: Independent volume, timing, and stem control per deck", 
+                           (10, status_y + 215), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
                 
                 cv2.putText(frame, "Press 'q' to quit", (10, self.screen_height - 10), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
