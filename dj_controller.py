@@ -23,6 +23,15 @@ except ImportError:
     print("Pyo not available. Install with: pip install pyo")
     import pygame.mixer as fallback_audio
 
+# Audio analysis for waveform generation
+try:
+    import librosa
+    import scipy.signal
+    AUDIO_ANALYSIS_AVAILABLE = True
+except ImportError:
+    print("Audio analysis libraries not available. Install with: pip install librosa scipy")
+    AUDIO_ANALYSIS_AVAILABLE = False
+
 @dataclass
 class ControllerButton:
     """Represents a clickable button on the DJ controller"""
@@ -86,6 +95,320 @@ class Track:
     key: str
     stems: Dict[str, str]  # stem_type -> file_path
 
+@dataclass
+class WaveformData:
+    """Represents waveform analysis data for visualization"""
+    audio_data: np.ndarray  # Raw audio samples
+    sample_rate: int
+    duration: float
+    waveform_peaks: np.ndarray  # Peak values for visualization
+    beat_times: np.ndarray  # Beat positions in seconds
+    bar_times: np.ndarray  # Bar positions in seconds
+    tempo: float
+    
+class WaveformAnalyzer:
+    """Analyzes audio files to extract waveform and beat information"""
+    
+    def __init__(self):
+        self.cache = {}  # Cache analyzed waveforms
+        
+    def analyze_track(self, track: Track) -> Optional[WaveformData]:
+        """Analyze a track and return waveform data"""
+        if not AUDIO_ANALYSIS_AVAILABLE:
+            return None
+            
+        cache_key = f"{track.name}_{track.bpm}"
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+            
+        try:
+            # Use instrumental stem as primary source for waveform
+            primary_stem = None
+            if "instrumental" in track.stems:
+                primary_stem = track.stems["instrumental"]
+            elif "bass" in track.stems:
+                primary_stem = track.stems["bass"]
+            elif track.stems:
+                primary_stem = list(track.stems.values())[0]
+                
+            if not primary_stem or not os.path.exists(primary_stem):
+                return None
+                
+            # Load audio file
+            audio_data, sample_rate = librosa.load(primary_stem, sr=44100)
+            duration = len(audio_data) / sample_rate
+            
+            # Generate waveform peaks for visualization (downsampled)
+            hop_length = 1024
+            frame_length = 2048
+            waveform_peaks = self._generate_waveform_peaks(audio_data, hop_length)
+            
+            # Beat tracking
+            tempo, beat_frames = librosa.beat.beat_track(
+                y=audio_data, sr=sample_rate, hop_length=hop_length
+            )
+            beat_times = librosa.frames_to_time(beat_frames, sr=sample_rate, hop_length=hop_length)
+            
+            # Generate bar times (assuming 4/4 time signature)
+            beats_per_bar = 4
+            bar_beats = beat_frames[::beats_per_bar]
+            bar_times = librosa.frames_to_time(bar_beats, sr=sample_rate, hop_length=hop_length)
+            
+            waveform_data = WaveformData(
+                audio_data=audio_data,
+                sample_rate=sample_rate,
+                duration=duration,
+                waveform_peaks=waveform_peaks,
+                beat_times=beat_times,
+                bar_times=bar_times,
+                tempo=float(tempo)
+            )
+            
+            self.cache[cache_key] = waveform_data
+            return waveform_data
+            
+        except Exception as e:
+            print(f"Error analyzing track {track.name}: {e}")
+            return None
+            
+    def _generate_waveform_peaks(self, audio_data: np.ndarray, hop_length: int) -> np.ndarray:
+        """Generate downsampled waveform peaks for visualization"""
+        # Calculate RMS energy in frames
+        frame_length = hop_length * 2
+        energy = librosa.feature.rms(
+            y=audio_data, 
+            frame_length=frame_length, 
+            hop_length=hop_length
+        )[0]
+        
+        # Normalize to 0-1 range
+        if len(energy) > 0:
+            energy = (energy - np.min(energy)) / (np.max(energy) - np.min(energy) + 1e-8)
+        
+        return energy
+
+class RekordboxStyleVisualizer:
+    """Professional DJ software style track visualization"""
+    
+    def __init__(self, screen_width: int, screen_height: int):
+        self.screen_width = screen_width
+        self.screen_height = screen_height
+        self.waveform_analyzer = WaveformAnalyzer()
+        
+        # Track visualization settings
+        self.track_height = 120
+        self.track_spacing = 20
+        self.waveform_height = 60
+        self.timeline_height = 30
+        
+        # Colors (Rekordbox-inspired professional theme)
+        self.bg_color = (25, 25, 30)          # Dark background
+        self.waveform_color = (100, 180, 255) # Bright blue waveform
+        self.played_color = (255, 150, 50)    # Orange for played portion
+        self.beat_color = (80, 80, 80)        # Subtle gray beat lines
+        self.bar_color = (120, 120, 120)      # More visible gray for bars
+        self.playhead_color = (255, 255, 255) # White playhead
+        self.cue_color = (255, 255, 50)       # Bright yellow cue point
+        self.deck_border = (70, 70, 75)       # Professional border color
+        self.text_color = (240, 240, 240)     # Light text
+        
+        # Cached waveform data
+        self.deck1_waveform: Optional[WaveformData] = None
+        self.deck2_waveform: Optional[WaveformData] = None
+        
+    def set_track_waveform(self, deck: int, track: Track):
+        """Load and cache waveform data for a track"""
+        waveform_data = self.waveform_analyzer.analyze_track(track)
+        if deck == 1:
+            self.deck1_waveform = waveform_data
+        else:
+            self.deck2_waveform = waveform_data
+            
+    def draw_stacked_visualization(self, overlay, audio_engine):
+        """Draw Rekordbox-style stacked track visualization"""
+        # Calculate layout
+        viz_start_x = 50
+        viz_width = self.screen_width - 100
+        viz_start_y = 30
+        
+        # Draw Deck 1 (top)
+        deck1_y = viz_start_y
+        self._draw_deck_visualization(
+            overlay, 1, viz_start_x, deck1_y, viz_width, 
+            self.deck1_waveform, audio_engine
+        )
+        
+        # Draw Deck 2 (bottom)
+        deck2_y = deck1_y + self.track_height + self.track_spacing
+        self._draw_deck_visualization(
+            overlay, 2, viz_start_x, deck2_y, viz_width, 
+            self.deck2_waveform, audio_engine
+        )
+        
+    def _draw_deck_visualization(self, overlay, deck_num: int, x: int, y: int, 
+                               width: int, waveform_data: Optional[WaveformData], 
+                               audio_engine):
+        """Draw visualization for a single deck"""
+        # Professional background with gradient effect
+        cv2.rectangle(overlay, (x, y), (x + width, y + self.track_height), 
+                     self.bg_color, -1)
+        cv2.rectangle(overlay, (x, y), (x + width, y + self.track_height), 
+                     self.deck_border, 2)
+        
+        # Add subtle gradient effect (top lighter)
+        gradient_height = 15
+        for i in range(gradient_height):
+            alpha = 0.3 - (i * 0.02)
+            gray_val = int(50 + i * 2)
+            cv2.line(overlay, (x + 2, y + 2 + i), (x + width - 2, y + 2 + i), 
+                    (gray_val, gray_val, gray_val), 1)
+        
+        # Deck label
+        deck_name = f"DECK {deck_num}"
+        is_playing = (audio_engine.deck1_is_playing if deck_num == 1 
+                     else audio_engine.deck2_is_playing)
+        label_color = (100, 255, 100) if is_playing else (200, 200, 200)
+        
+        cv2.putText(overlay, deck_name, (x + 10, y + 20), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, label_color, 2)
+        
+        # Get current position
+        try:
+            position = audio_engine.get_playback_position(deck_num)
+            tempo_multiplier = audio_engine.get_tempo_multiplier(deck_num)
+        except:
+            position = 0.0
+            tempo_multiplier = 1.0
+            
+        # Waveform area
+        waveform_x = x + 10
+        waveform_y = y + 35
+        waveform_width = width - 20
+        
+        if waveform_data is not None:
+            self._draw_waveform_with_beats(
+                overlay, waveform_x, waveform_y, waveform_width, 
+                waveform_data, position, is_playing
+            )
+        else:
+            # Fallback visualization without waveform data
+            self._draw_simple_timeline(
+                overlay, waveform_x, waveform_y, waveform_width, 
+                position, is_playing
+            )
+            
+        # Track info
+        track_name = "No Track Loaded"
+        if deck_num == 1 and audio_engine.deck1_track:
+            track_name = audio_engine.deck1_track.name
+        elif deck_num == 2 and audio_engine.deck2_track:
+            track_name = audio_engine.deck2_track.name
+            
+        cv2.putText(overlay, track_name[:45], (x + 200, y + 20), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.45, self.text_color, 1)
+        
+        # Tempo info with professional formatting
+        tempo_text = f"♪ {tempo_multiplier:.1%}"
+        tempo_color = (50, 255, 150) if abs(tempo_multiplier - 1.0) < 0.01 else (255, 200, 50)
+        cv2.putText(overlay, tempo_text, (x + width - 120, y + 20), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, tempo_color, 1)
+        
+        # Add position info
+        position_text = f"{position:.1%}"
+        cv2.putText(overlay, position_text, (x + width - 200, y + 110), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.35, self.text_color, 1)
+        
+    def _draw_waveform_with_beats(self, overlay, x: int, y: int, width: int, 
+                                waveform_data: WaveformData, position: float, 
+                                is_playing: bool):
+        """Draw detailed waveform with beat grid"""
+        # Draw beat grid first (behind waveform)
+        self._draw_beat_grid(overlay, x, y, width, waveform_data, position)
+        
+        # Draw waveform
+        peaks = waveform_data.waveform_peaks
+        if len(peaks) == 0:
+            return
+            
+        # Calculate scaling
+        samples_per_pixel = len(peaks) / width
+        
+        for i in range(width):
+            sample_idx = int(i * samples_per_pixel)
+            if sample_idx >= len(peaks):
+                break
+                
+            # Get peak value for this pixel
+            peak = peaks[sample_idx]
+            wave_height = int(peak * self.waveform_height)
+            
+            # Determine color based on playback position
+            pixel_position = i / width
+            if pixel_position <= position:
+                color = self.played_color if is_playing else (150, 100, 50)
+            else:
+                color = self.waveform_color
+                
+            # Draw waveform bar (centered vertically)
+            bar_top = y + (self.waveform_height - wave_height) // 2
+            bar_bottom = bar_top + wave_height
+            
+            if wave_height > 2:
+                cv2.line(overlay, (x + i, bar_top), (x + i, bar_bottom), color, 1)
+                
+        # Draw playhead
+        playhead_x = x + int(position * width)
+        cv2.line(overlay, (playhead_x, y), (playhead_x, y + self.waveform_height), 
+                self.playhead_color, 2)
+        
+        # Draw cue point (at beginning for now)
+        cue_x = x
+        cv2.line(overlay, (cue_x, y), (cue_x, y + self.waveform_height), 
+                self.cue_color, 3)
+                
+    def _draw_beat_grid(self, overlay, x: int, y: int, width: int, 
+                       waveform_data: WaveformData, position: float):
+        """Draw beat and bar grid lines"""
+        duration = waveform_data.duration
+        
+        # Draw beat lines
+        for beat_time in waveform_data.beat_times:
+            if beat_time <= duration:
+                beat_x = x + int((beat_time / duration) * width)
+                cv2.line(overlay, (beat_x, y), (beat_x, y + self.waveform_height), 
+                        self.beat_color, 1)
+        
+        # Draw bar lines (thicker)
+        for bar_time in waveform_data.bar_times:
+            if bar_time <= duration:
+                bar_x = x + int((bar_time / duration) * width)
+                cv2.line(overlay, (bar_x, y), (bar_x, y + self.waveform_height), 
+                        self.bar_color, 2)
+                
+    def _draw_simple_timeline(self, overlay, x: int, y: int, width: int, 
+                            position: float, is_playing: bool):
+        """Draw simple timeline when waveform data is not available"""
+        # Background timeline
+        cv2.rectangle(overlay, (x, y + 25), (x + width, y + 35), (50, 50, 50), -1)
+        cv2.rectangle(overlay, (x, y + 25), (x + width, y + 35), (100, 100, 100), 1)
+        
+        # Progress
+        progress_width = int(position * width)
+        if progress_width > 0:
+            color = self.played_color if is_playing else (100, 100, 100)
+            cv2.rectangle(overlay, (x, y + 25), (x + progress_width, y + 35), color, -1)
+            
+        # Playhead
+        playhead_x = x + progress_width
+        cv2.line(overlay, (playhead_x, y + 20), (playhead_x, y + 40), 
+                self.playhead_color, 2)
+        
+        # Simple beat markers (every 10%)
+        for i in range(1, 10):
+            marker_x = x + int(i * 0.1 * width)
+            cv2.line(overlay, (marker_x, y + 25), (marker_x, y + 35), 
+                    self.beat_color, 1)
+
 class AudioEngine:
     """Handles audio playback and mixing with professional track position management"""
     
@@ -103,22 +426,24 @@ class AudioEngine:
         self.deck2_master_volume = 0.8  # 0.0 to 1.0 (default 80%)
         
         
-        # Professional track position management
+        # Professional track position management - Industry Standard
         self.deck1_cue_point = 0.0      # Cue point position (default: beginning)
         self.deck2_cue_point = 0.0
-        self.deck1_play_position = 0.0  # Current playback position in seconds
-        self.deck2_play_position = 0.0
+        
+        # AUTHORITATIVE TIMELINE POSITIONS (in seconds) - like Rekordbox
+        self.deck1_timeline_position = 0.0  # Current track position (THE source of truth)
+        self.deck2_timeline_position = 0.0
+        
+        # Playback state
         self.deck1_is_playing = False   # True playback state
         self.deck2_is_playing = False
         
-        # Independent timing for each deck
+        # Timeline timing for continuous playback
         import time
-        self.deck1_start_time = 0.0     # When deck 1 started playing
-        self.deck2_start_time = 0.0     # When deck 2 started playing
-        self.deck1_pause_time = 0.0     # Accumulated pause time for deck 1
-        self.deck2_pause_time = 0.0     # Accumulated pause time for deck 2
-        self.deck1_last_pause = 0.0     # When deck 1 was last paused
-        self.deck2_last_pause = 0.0     # When deck 2 was last paused
+        self.deck1_last_update_time = 0.0    # Last time position was updated
+        self.deck2_last_update_time = 0.0
+        self.deck1_playback_speed = 1.0      # Current playback speed (1.0 = normal, 0.0 = paused, -1.0 = reverse)
+        self.deck2_playback_speed = 1.0
         
         # Crossfader mixing - professional DJ crossfader behavior
         self.crossfader_position = 0.5  # 0.0 = full left (deck1), 1.0 = full right (deck2)
@@ -142,6 +467,10 @@ class AudioEngine:
         # Track references for reloading during CUE operations
         self.deck1_track = None
         self.deck2_track = None
+        
+        # Master song players (industry standard - one master player per deck)
+        self.deck1_master_player = None
+        self.deck2_master_player = None
         
         # Jog wheel and scratching state - professional DJ controller behavior
         self.deck1_is_scratching = False
@@ -282,6 +611,31 @@ class AudioEngine:
             players.clear()
             volumes.clear()
             
+            # Create master player for timeline control (industry standard)
+            # Use the first available audio file as master player
+            master_file = None
+            for stem_type in ["vocals", "instrumental"]:
+                if stem_type in track.stems and os.path.exists(track.stems[stem_type]):
+                    master_file = track.stems[stem_type]
+                    break
+            
+            if master_file:
+                # Stop existing master player
+                if deck == 1 and self.deck1_master_player:
+                    self.deck1_master_player.stop()
+                elif deck == 2 and self.deck2_master_player:
+                    self.deck2_master_player.stop()
+                
+                # Create master player for timeline control
+                master_player = SfPlayer(master_file, loop=True, mul=0.0)  # Silent - only for timeline
+                master_player.out()
+                
+                if deck == 1:
+                    self.deck1_master_player = master_player
+                else:
+                    self.deck2_master_player = master_player
+                print(f"Created master player for deck {deck} timeline control")
+            
             # Load only vocal and instrumental stems for clear isolation
             target_stems = ["vocals", "instrumental"]
             
@@ -342,105 +696,115 @@ class AudioEngine:
             return False
     
     def play_deck(self, deck: int):
-        """Start playing the specified deck from current play position (NOT cue point)"""
+        """Start playing the specified deck from current timeline position - Industry Standard"""
         import time
+        
+        # Update timeline positions first
+        self._update_timeline_positions()
+        
         players = self.deck1_players if deck == 1 else self.deck2_players
-        volumes = self.deck1_volumes if deck == 1 else self.deck2_volumes
-        active_stems = self.deck1_active_stems if deck == 1 else self.deck2_active_stems
+        master_player = self.deck1_master_player if deck == 1 else self.deck2_master_player
         
-        current_time = time.time()
-        
-        # Set playing state and update timing
+        # Set playing state and reset timing
         if deck == 1:
             self.deck1_is_playing = True
             self.deck1_state = DeckState.PLAYING
-            # Set start time accounting for previous playback
-            self.deck1_start_time = current_time - self.deck1_play_position
+            self.deck1_playback_speed = 1.0  # Normal forward playback
+            self.deck1_last_update_time = time.time()
+            current_position = self.deck1_timeline_position
+            current_tempo = self.deck1_tempo
+            track = self.deck1_track
         else:
             self.deck2_is_playing = True
             self.deck2_state = DeckState.PLAYING
-            # Set start time accounting for previous playback
-            self.deck2_start_time = current_time - self.deck2_play_position
-        
-        # Resume playback by setting volume (players are already running) with master volume
-        self._update_all_stem_volumes(deck)
-        
-        print(f"Deck {deck} playing from position {self.deck1_play_position if deck == 1 else self.deck2_play_position:.1f}s")
-    
-    def pause_deck(self, deck: int):
-        """Pause the specified deck (maintains current play position)"""
-        import time
-        players = self.deck1_players if deck == 1 else self.deck2_players
-        
-        current_time = time.time()
-        
-        # Update play position before pausing
-        if deck == 1:
-            if self.deck1_is_playing:
-                self.deck1_play_position = current_time - self.deck1_start_time
-            self.deck1_is_playing = False
-            self.deck1_state = DeckState.PAUSED
-        else:
-            if self.deck2_is_playing:
-                self.deck2_play_position = current_time - self.deck2_start_time
-            self.deck2_is_playing = False
-            self.deck2_state = DeckState.PAUSED
-        
-        # Mute all players (but keep them running to maintain position)
-        for player in players.values():
-            player.mul = 0.0
-        
-        position = self.deck1_play_position if deck == 1 else self.deck2_play_position
-        print(f"Deck {deck} paused at position {position:.1f}s")
-    
-    def cue_deck(self, deck: int):
-        """CUE: Jump to cue point and play at low volume for preview (ONLY operation that seeks)"""
-        import time
-        players = self.deck1_players if deck == 1 else self.deck2_players
-        volumes = self.deck1_volumes if deck == 1 else self.deck2_volumes
-        active_stems = self.deck1_active_stems if deck == 1 else self.deck2_active_stems
-        cue_point = self.deck1_cue_point if deck == 1 else self.deck2_cue_point
-        
-        current_time = time.time()
-        
-        # Stop and restart all players to reset position (ONLY operation that does this)
-        for stem_type, player in players.items():
+            self.deck2_playback_speed = 1.0  # Normal forward playback
+            self.deck2_last_update_time = time.time()
+            current_position = self.deck2_timeline_position
+            current_tempo = self.deck2_tempo
+            track = self.deck2_track
+
+        # Force recreate players to ensure sound, just like CUE button - but at current position
+        for stem_type, player in list(players.items()):
             player.stop()
-            # Recreate player to reset position to beginning
-            file_path = None
-            if deck == 1 and self.deck1_track:
-                file_path = self.deck1_track.stems.get(stem_type)
-            elif deck == 2 and self.deck2_track:
-                file_path = self.deck2_track.stems.get(stem_type)
-            
+            file_path = track.stems.get(stem_type)
             if file_path and os.path.exists(file_path):
-                # Recreate player at beginning - SIMPLE WORKING CHAIN
                 new_player = SfPlayer(file_path, loop=True, mul=0.0)
-                new_player.out()  # Direct output - PROVEN TO WORK
-                
-                # Apply current tempo to new player
-                current_tempo = self.deck1_tempo if deck == 1 else self.deck2_tempo
+                if hasattr(new_player, 'setOffset'):
+                    new_player.setOffset(float(current_position))
                 if hasattr(new_player, 'speed'):
                     new_player.speed = float(current_tempo)
-                
+                new_player.out()
                 players[stem_type] = new_player
         
-        # Reset timing and set cue state
-        if deck == 1:
-            self.deck1_state = DeckState.CUEING
-            self.deck1_play_position = 0.0
-            self.deck1_start_time = current_time  # Reset timing to current
-            self.deck1_is_playing = False
-        else:
-            self.deck2_state = DeckState.CUEING
-            self.deck2_play_position = 0.0
-            self.deck2_start_time = current_time  # Reset timing to current
-            self.deck2_is_playing = False
-        
-        # Play at lower volume for cueing (only active stems) with master volume
+        # Recreate master player as well to ensure sync
+        if master_player:
+            master_player.stop()
+        master_file = None
+        if track and "instrumental" in track.stems: # Assuming instrumental is the master
+            master_file = track.stems["instrumental"]
+        if master_file and os.path.exists(master_file):
+            new_master = SfPlayer(master_file, loop=True, mul=0.0)
+            if hasattr(new_master, 'setOffset'):
+                new_master.setOffset(float(current_position))
+            if hasattr(new_master, 'speed'):
+                new_master.speed = float(current_tempo)
+            new_master.out()
+            if deck == 1:
+                self.deck1_master_player = new_master
+            else:
+                self.deck2_master_player = new_master
+
+        # Update volume levels which also starts playback sound
         self._update_all_stem_volumes(deck)
         
-        print(f"Deck {deck} CUE: jumped to beginning (timing reset)")
+        print(f"Deck {deck} PLAYING from timeline position {current_position:.1f}s")
+    
+    def pause_deck(self, deck: int):
+        """Pause the specified deck - stops playback but maintains timeline position"""
+        import time
+        
+        # Update timeline positions first to capture current position
+        self._update_timeline_positions()
+        
+        players = self.deck1_players if deck == 1 else self.deck2_players
+        master_player = self.deck1_master_player if deck == 1 else self.deck2_master_player
+        
+        # Set paused state - timeline position is already updated
+        if deck == 1:
+            self.deck1_is_playing = False
+            self.deck1_state = DeckState.PAUSED
+            self.deck1_playback_speed = 0.0  # Stop timeline advancement
+            current_position = self.deck1_timeline_position
+        else:
+            self.deck2_is_playing = False
+            self.deck2_state = DeckState.PAUSED
+            self.deck2_playback_speed = 0.0  # Stop timeline advancement
+            current_position = self.deck2_timeline_position
+        
+        # Pause audio players
+        if master_player:
+            if hasattr(master_player, 'stop'):
+                master_player.stop()
+        
+        # Mute all stem players (but keep them at current position)
+        for player in players.values():
+            if hasattr(player, 'stop'):
+                player.stop()
+            else:
+                player.mul = 0.0
+        
+        print(f"Deck {deck} PAUSED at timeline position {current_position:.1f}s")
+    
+    def cue_deck(self, deck: int):
+        """CUE: Jumps track to cue point (beginning) and pauses playback."""
+        print(f"Deck {deck} CUE: Returning to start and pausing.")
+        
+        # Immediately pause the deck to stop any ongoing sound.
+        self.pause_deck(deck)
+        
+        # Set the timeline position to the cue point (0.0 for beginning).
+        cue_point = self.deck1_cue_point if deck == 1 else self.deck2_cue_point
+        self.set_timeline_position(deck, cue_point)
     
     def stop_cue_deck(self, deck: int):
         """Stop cueing and return to stopped state (position remains at cue point)"""
@@ -472,23 +836,11 @@ class AudioEngine:
         active_stems[stem_type] = volume > 0.0
         volumes[stem_type] = volume
         
-        if stem_type in players:
-            # Apply volume change immediately with master volume (NO stop/start, just volume control)
-            master_volume = self.deck1_master_volume if deck == 1 else self.deck2_master_volume
-            
-            # Calculate final volume
-            if is_playing:
-                # Deck is playing - apply volume with master volume
-                final_volume = volume * master_volume if volume > 0 else 0.0
-            elif current_state == DeckState.CUEING:
-                # Deck is cueing - apply reduced volume with master volume
-                final_volume = volume * master_volume * 0.3 if volume > 0 else 0.0
-            else:
-                # Deck is stopped/paused - set volume for next play
-                final_volume = 0.0
-            
-            # Apply volume directly to player
-            players[stem_type].mul = final_volume
+        print(f"SET STEM VOLUME: Deck {deck} {stem_type} = {volume:.2f} | active = {volume > 0.0} | playing = {is_playing}")
+        
+        # Apply the change immediately by updating all stem volumes
+        # This ensures proper crossfader gain and master volume calculations
+        self._update_all_stem_volumes(deck)
         
         print(f"Deck {deck} {stem_type}: {'ON' if volume > 0 else 'OFF'} (volume control only)")
     
@@ -524,18 +876,25 @@ class AudioEngine:
         print(f"Crossfader: {position_text}")
     
     def _calculate_crossfader_gain(self, deck: int) -> float:
-        """Calculate crossfader gain for a deck using professional power curve"""
-        # Professional DJ crossfader uses a power curve for smooth mixing
-        # 0.0 = full left (deck1), 1.0 = full right (deck2)
+        """Calculate crossfader gain for a deck - center position = full volume for both"""
+        # 0.0 = full left (deck1), 0.5 = center (both full), 1.0 = full right (deck2)
         
         if deck == 1:
-            # Deck 1: Full volume at position 0.0, silent at position 1.0
-            # Use power curve for smooth transition
-            gain = (1.0 - self.crossfader_position) ** 0.5
+            # Deck 1: Full volume when crossfader is left or center
+            if self.crossfader_position <= 0.5:
+                gain = 1.0  # Full volume when left or center
+            else:
+                # Fade out as crossfader moves right from center
+                gain = 2.0 * (1.0 - self.crossfader_position)
+                gain = max(0.0, min(1.0, gain))
         elif deck == 2:
-            # Deck 2: Silent at position 0.0, full volume at position 1.0  
-            # Use power curve for smooth transition
-            gain = self.crossfader_position ** 0.5
+            # Deck 2: Full volume when crossfader is right or center
+            if self.crossfader_position >= 0.5:
+                gain = 1.0  # Full volume when right or center
+            else:
+                # Fade out as crossfader moves left from center
+                gain = 2.0 * self.crossfader_position
+                gain = max(0.0, min(1.0, gain))
         else:
             gain = 0.0
         
@@ -551,12 +910,18 @@ class AudioEngine:
         if deck == 1:
             self.deck1_tempo = tempo
             players = self.deck1_players
+            master_player = self.deck1_master_player
         elif deck == 2:
             self.deck2_tempo = tempo
             players = self.deck2_players
+            master_player = self.deck2_master_player
         else:
             print(f"Invalid deck: {deck}")
             return
+        
+        # Apply tempo to master player first (industry standard)
+        if master_player and hasattr(master_player, 'speed'):
+            master_player.speed = float(tempo)
         
         # Apply tempo to all active players for this deck
         for stem_type, player in players.items():
@@ -602,36 +967,49 @@ class AudioEngine:
         print(f"Deck {deck} SCRATCH MODE: ON")
     
     def update_scratch_speed(self, deck: int, scratch_speed: float):
-        """Update scratch speed - like rotating a real jog wheel"""
+        """Update scratch speed - like rotating a real jog wheel - controls master player"""
         if deck == 1 and hasattr(self, 'deck1_is_scratching') and self.deck1_is_scratching:
             self.deck1_scratch_speed = scratch_speed
             players = self.deck1_players
+            master_player = self.deck1_master_player
+            base_tempo = self.deck1_tempo
         elif deck == 2 and hasattr(self, 'deck2_is_scratching') and self.deck2_is_scratching:
             self.deck2_scratch_speed = scratch_speed
             players = self.deck2_players
+            master_player = self.deck2_master_player
+            base_tempo = self.deck2_tempo
         else:
             return
+        
+        # Apply scratch speed to master player first (industry standard)
+        if master_player and hasattr(master_player, 'speed'):
+            master_player.speed = float(base_tempo + scratch_speed)
             
         # Apply scratch speed to all players (temporary speed change)
         for stem_type, player in players.items():
             if hasattr(player, 'speed'):
-                base_tempo = self.deck1_tempo if deck == 1 else self.deck2_tempo
                 player.speed = float(base_tempo + scratch_speed)
     
     def stop_scratch(self, deck: int):
-        """Stop scratching mode - release jog wheel"""
+        """Stop scratching mode - release jog wheel - restores master player tempo"""
         if deck == 1:
             self.deck1_is_scratching = False
             players = self.deck1_players
+            master_player = self.deck1_master_player
             base_tempo = self.deck1_tempo
         elif deck == 2:
             self.deck2_is_scratching = False  
             players = self.deck2_players
+            master_player = self.deck2_master_player
             base_tempo = self.deck2_tempo
         else:
             return
+        
+        # Restore normal tempo to master player first (industry standard)
+        if master_player and hasattr(master_player, 'speed'):
+            master_player.speed = float(base_tempo)
             
-        # Restore normal tempo
+        # Restore normal tempo to all players
         for stem_type, player in players.items():
             if hasattr(player, 'speed'):
                 player.speed = float(base_tempo)
@@ -667,6 +1045,154 @@ class AudioEngine:
             self.deck2_start_time = time.time() - target_position
             
         print(f"Deck {deck} SEEK: {position_ratio*100:.1f}% ({target_position:.1f}s)")
+    
+    def _update_timeline_positions(self):
+        """Update timeline positions based on current playback state - called continuously"""
+        import time
+        current_time = time.time()
+        
+        # Update Deck 1 timeline
+        if self.deck1_last_update_time > 0:
+            time_delta = current_time - self.deck1_last_update_time
+            if self.deck1_is_playing:
+                # Move timeline forward based on playback speed and tempo
+                effective_speed = self.deck1_playback_speed * self.deck1_tempo
+                self.deck1_timeline_position += time_delta * effective_speed
+                # Ensure position doesn't go negative
+                self.deck1_timeline_position = max(0.0, self.deck1_timeline_position)
+        self.deck1_last_update_time = current_time
+        
+        # Update Deck 2 timeline  
+        if self.deck2_last_update_time > 0:
+            time_delta = current_time - self.deck2_last_update_time
+            if self.deck2_is_playing:
+                # Move timeline forward based on playback speed and tempo
+                effective_speed = self.deck2_playback_speed * self.deck2_tempo
+                self.deck2_timeline_position += time_delta * effective_speed
+                # Ensure position doesn't go negative
+                self.deck2_timeline_position = max(0.0, self.deck2_timeline_position)
+        self.deck2_last_update_time = current_time
+
+    def get_playback_position(self, deck: int) -> float:
+        """Get current timeline position as ratio (0.0 to 1.0) - Industry Standard"""
+        # Update timeline positions first
+        self._update_timeline_positions()
+        
+        estimated_track_length = 180.0  # 3 minutes
+        
+        if deck == 1:
+            current_position = self.deck1_timeline_position
+        else:
+            current_position = self.deck2_timeline_position
+            
+        position_ratio = current_position / estimated_track_length
+        return max(0.0, min(1.0, position_ratio % 1.0))
+    
+    def get_tempo_multiplier(self, deck: int) -> float:
+        """Get current tempo multiplier for a deck (for jog wheel spinning speed)"""
+        if deck == 1:
+            return self.deck1_tempo
+        elif deck == 2:
+            return self.deck2_tempo
+        return 1.0
+    
+    def set_timeline_position(self, deck: int, position_seconds: float):
+        """Set absolute timeline position - Industry Standard DJ Software approach"""
+        try:
+            # Update timeline positions first
+            self._update_timeline_positions()
+            
+            # Clamp position to valid range
+            position_seconds = max(0.0, position_seconds)
+            
+            # Update authoritative timeline position
+            if deck == 1:
+                old_position = self.deck1_timeline_position
+                self.deck1_timeline_position = position_seconds
+                master_player = self.deck1_master_player
+            else:
+                old_position = self.deck2_timeline_position
+                self.deck2_timeline_position = position_seconds
+                master_player = self.deck2_master_player
+                
+            # Sync audio players to new position
+            if master_player:
+                if hasattr(master_player, 'setOffset'):
+                    master_player.setOffset(float(position_seconds))
+                elif hasattr(master_player, 'time'):
+                    master_player.time = float(position_seconds)
+                    
+                # Sync all stem players
+                self._sync_stem_players_to_master(deck, float(position_seconds))
+                
+            print(f"DECK {deck} TIMELINE SET: {old_position:.2f}s → {position_seconds:.2f}s")
+                
+        except Exception as e:
+            print(f"Error setting timeline position for deck {deck}: {e}")
+
+    def set_playback_speed(self, deck: int, speed: float):
+        """Set playback speed for real-time jog wheel control - Industry Standard"""
+        try:
+            # Update timeline positions first
+            self._update_timeline_positions()
+            
+            if deck == 1:
+                self.deck1_playback_speed = speed
+                master_player = self.deck1_master_player
+                players = self.deck1_players
+                base_tempo = self.deck1_tempo
+            else:
+                self.deck2_playback_speed = speed
+                master_player = self.deck2_master_player
+                players = self.deck2_players
+                base_tempo = self.deck2_tempo
+                
+            # Apply speed to audio players for real-time scratching
+            effective_speed = float(speed * base_tempo)  # Convert to Python float to avoid numpy issues
+            
+            if master_player and hasattr(master_player, 'speed'):
+                master_player.speed = effective_speed
+                
+            for player in players.values():
+                if hasattr(player, 'speed'):
+                    player.speed = effective_speed
+                    
+            print(f"DECK {deck} SPEED SET: {speed:.2f}x (effective: {effective_speed:.2f}x)")
+            
+        except Exception as e:
+            print(f"Error setting playback speed for deck {deck}: {e}")
+
+    def nudge_track_position(self, deck: int, position_change_seconds: float):
+        """Nudge track timeline position - called by jog wheel interactions"""
+        # Update timeline positions first
+        self._update_timeline_positions()
+        
+        if deck == 1:
+            current_position = self.deck1_timeline_position
+        else:
+            current_position = self.deck2_timeline_position
+            
+        new_position = current_position + position_change_seconds
+        self.set_timeline_position(deck, new_position)
+    
+    def _sync_stem_players_to_master(self, deck: int, position_seconds: float):
+        """Sync all stem players to master player position"""
+        try:
+            players = self.deck1_players if deck == 1 else self.deck2_players
+            
+            for stem_type, player in players.items():
+                if hasattr(player, 'setOffset'):
+                    player.setOffset(position_seconds)
+                elif hasattr(player, 'time'):
+                    player.time = position_seconds
+                    
+                # Ensure all players are properly synced (sometimes needed for pyo)
+                if hasattr(player, 'reset'):
+                    # Reset triggers re-reading from the new position
+                    player.reset()
+                    
+        except Exception as e:
+            print(f"Error syncing stem players for deck {deck}: {e}")
     
     def set_eq_low(self, deck: int, value: float):
         """Set low-band EQ for a deck - simple like real DJ controllers"""
@@ -798,6 +1324,10 @@ class AudioEngine:
             
             # Apply volume directly to player - SIMPLE & RELIABLE
             player.mul = final_volume
+            
+            # Debug output for troubleshooting audio issues (only show if there's an issue)
+            if is_playing and final_volume == 0.0:
+                print(f"AUDIO ISSUE: Deck {deck} {stem_type} should be playing but volume=0 | stem_active={stem_active} | stem_vol={stem_volume:.2f} | master_vol={master_volume:.2f}")
     
     def set_cue_point(self, deck: int, position: float = 0.0):
         """Set the cue point for a deck (default: beginning of track)"""
@@ -826,32 +1356,6 @@ class AudioEngine:
                 "active_stems": self.deck2_active_stems.copy()
             }
     
-    def get_playback_position(self, deck: int) -> float:
-        """Get current playback position as a percentage (0.0 to 1.0)"""
-        import time
-        current_time = time.time()
-        track_length = 180.0  # Assuming 3-minute tracks
-        
-        if deck == 1:
-            if self.deck1_is_playing:
-                # Calculate current position based on when deck started and current time
-                current_position = current_time - self.deck1_start_time
-                # Loop the track if it goes beyond track length
-                current_position = current_position % track_length
-                return current_position / track_length
-            else:
-                # Return last known position when not playing
-                return (self.deck1_play_position % track_length) / track_length
-        else:
-            if self.deck2_is_playing:
-                # Calculate current position based on when deck started and current time  
-                current_position = current_time - self.deck2_start_time
-                # Loop the track if it goes beyond track length
-                current_position = current_position % track_length
-                return current_position / track_length
-            else:
-                # Return last known position when not playing
-                return (self.deck2_play_position % track_length) / track_length
     
     def cleanup(self):
         """Clean up audio resources"""
@@ -1046,6 +1550,9 @@ class DJController:
         self.screen_height = 720
         self.overlay_alpha = 0.8
         
+        # Initialize Rekordbox-style visualization
+        self.visualizer = RekordboxStyleVisualizer(self.screen_width, self.screen_height)
+        
         # Initialize controller elements
         self.setup_controller_layout()
         
@@ -1056,6 +1563,7 @@ class DJController:
         
         # Slider interaction state - for intuitive pinch-to-grab behavior
         self.active_slider = None  # Which slider is currently grabbed
+        self.active_slider_pos = None # The (x, y) position of the pinch grabbing the slider
         self.slider_grab_offset = 0  # Offset from slider position when grabbed
         
         # Jog wheel interaction state - for scratching and track navigation
@@ -1131,6 +1639,7 @@ class DJController:
         
         # Add knob interaction state
         self.active_knob = None  # Which knob is currently being turned
+        self.active_knob_pos = None # The (x, y) position of the pinch grabbing the knob
         self.knob_initial_angle = 0.0  # Initial touch angle for rotation tracking
     
     def handle_button_interaction(self, button: ControllerButton, deck: int = 0):
@@ -1147,6 +1656,20 @@ class DJController:
             if button.button_type == "toggle":
                 button.is_active = not button.is_active
                 
+                # Industry Standard: If no stems are active, turn them on when playing
+                active_stems = self.audio_engine.deck1_active_stems if deck == 1 else self.audio_engine.deck2_active_stems
+                if button.is_active and not any(active_stems.values()):
+                    print(f"Deck {deck}: No active stems. Activating Vocal/Instrumental for playback.")
+                    self.audio_engine.set_stem_volume(deck, "vocals", 0.7)
+                    self.audio_engine.set_stem_volume(deck, "instrumental", 0.7)
+                    # Update button UI to reflect this change
+                    if deck == 1:
+                        self.deck1_buttons["vocal"].is_active = True
+                        self.deck1_buttons["instrumental"].is_active = True
+                    else:
+                        self.deck2_buttons["vocal"].is_active = True
+                        self.deck2_buttons["instrumental"].is_active = True
+
                 if deck == 1:
                     if button.is_active:
                         self.audio_engine.play_deck(1)
@@ -1328,7 +1851,7 @@ class DJController:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
     
     def process_hand_interactions(self, pinch_data, jog_pinch_data):
-        """Process hand interactions - regular pinch for controls, jog pinch for jog wheels"""
+        """Process hand interactions - supports multi-hand/multi-pinch interactions"""
         # Store previous button states
         prev_pressed_states = {}
         for buttons in [self.deck1_buttons, self.deck2_buttons, self.center_buttons]:
@@ -1340,92 +1863,108 @@ class DJController:
             for button in buttons.values():
                 button.is_pressed = False
         
-        # Check if any pinch is active
+        # Track which controls have been interacted with in this frame to avoid conflicts
+        interacted_controls = set()
+
+        # --- Process Regular Pinches (for sliders, knobs, buttons) ---
         active_pinches = [(x, y) for is_pinched, (x, y) in pinch_data if is_pinched]
         
-        if active_pinches:
-            # Use the first active pinch for interaction
-            x, y = active_pinches[0]
-            
-            # If we have an active slider, continue controlling it regardless of position
-            if self.active_slider:
+        # First, handle ongoing interactions (sliders, knobs)
+        if self.active_slider:
+            # Find the pinch closest to the active slider to continue the interaction
+            pinch_to_update = self._find_closest_pinch(self.active_slider_pos, active_pinches)
+            if pinch_to_update:
+                x, y = pinch_to_update
                 self._update_active_slider(x, y)
-            # If we have an active knob, continue rotating it
-            elif self.active_knob:
+                interacted_controls.add(self.active_slider)
+                active_pinches.remove(pinch_to_update) # This pinch has been used
+
+        if self.active_knob:
+             # Find the pinch closest to the active knob
+            pinch_to_update = self._find_closest_pinch(self.active_knob_pos, active_pinches)
+            if pinch_to_update:
+                x, y = pinch_to_update
                 self._update_active_knob(x, y)
-            else:
-                # No active control - immediately check what's under the pinch point
-                interaction_handled = False
-                
-                # Check sliders/faders first (priority order)
+                interacted_controls.add(self.active_knob)
+                active_pinches.remove(pinch_to_update)
+
+        # Process remaining pinches for new interactions
+        for x, y in active_pinches:
+            interaction_handled = False
+            # Check for new slider/knob grabs if no control is currently held by this "hand"
+            if not self.active_slider and not self.active_knob:
                 if self.check_fader_collision(x, y, self.volume_fader_1):
                     self._grab_slider('volume_fader_1', x, y)
-                    self._update_active_slider(x, y)  # Immediately apply effect
                     interaction_handled = True
                 elif self.check_fader_collision(x, y, self.volume_fader_2):
                     self._grab_slider('volume_fader_2', x, y)
-                    self._update_active_slider(x, y)  # Immediately apply effect
                     interaction_handled = True
                 elif self.check_crossfader_collision(x, y):
                     self._grab_slider('crossfader', x, y)
-                    self._update_active_slider(x, y)  # Immediately apply effect
                     interaction_handled = True
                 elif self.check_fader_collision(x, y, self.tempo_fader_1):
                     self._grab_slider('tempo_fader_1', x, y)
-                    self._update_active_slider(x, y)  # Immediately apply effect
                     interaction_handled = True
                 elif self.check_fader_collision(x, y, self.tempo_fader_2):
                     self._grab_slider('tempo_fader_2', x, y)
-                    self._update_active_slider(x, y)  # Immediately apply effect
                     interaction_handled = True
-                # Check EQ knobs (only LOW knobs are functional)
                 elif self._check_knob_area(x, y, self.deck1_eq_knobs["low"]):
                     self._grab_knob(self.deck1_eq_knobs["low"], x, y, 1, "low")
-                    self._update_active_knob(x, y)  # Immediately apply effect
                     interaction_handled = True
                 elif self._check_knob_area(x, y, self.deck2_eq_knobs["low"]):
                     self._grab_knob(self.deck2_eq_knobs["low"], x, y, 2, "low")
-                    self._update_active_knob(x, y)  # Immediately apply effect
                     interaction_handled = True
-                
-                # If no slider/knob interaction, check buttons
-                if not interaction_handled:
-                    self._check_button_interactions(x, y, prev_pressed_states)
-        else:
-            # No pinch detected - release any active slider or knob
+
+            # If no slider/knob was grabbed by this pinch, check for button presses
+            if not interaction_handled:
+                self._check_button_interactions(x, y, prev_pressed_states)
+
+        # Release sliders/knobs if no pinches are active
+        if not pinch_data or not any(p[0] for p in pinch_data):
             if self.active_slider:
                 self._release_active_slider()
-            elif self.active_knob:
+            if self.active_knob:
                 self._release_active_knob()
-            # Still check for button releases
-            self._handle_button_releases(prev_pressed_states)
         
-        # Handle jog wheel interactions (middle + index finger pinch)
+        # --- Process Jog Wheel Pinches ---
         active_jog_pinches = [(x, y) for is_jog_pinched, (x, y) in jog_pinch_data if is_jog_pinched]
         
         if active_jog_pinches:
-            # Use the first active jog pinch for interaction
+            # For simplicity, we'll allow one jog wheel interaction at a time for now
+            # This can be expanded to two jog wheels with more complex tracking
             jog_x, jog_y = active_jog_pinches[0]
             
-            # If we have an active jog wheel, continue controlling it
             if self.active_jog:
                 self._update_active_jog_wheel(jog_x, jog_y)
             else:
-                # No active jog wheel - immediately check what's under the jog pinch point
                 if self._check_jog_wheel_area(jog_x, jog_y, self.jog_wheel_1):
                     self._grab_jog_wheel(self.jog_wheel_1, jog_x, jog_y, 1)
-                    self._update_active_jog_wheel(jog_x, jog_y)  # Immediately apply effect
                 elif self._check_jog_wheel_area(jog_x, jog_y, self.jog_wheel_2):
                     self._grab_jog_wheel(self.jog_wheel_2, jog_x, jog_y, 2)
-                    self._update_active_jog_wheel(jog_x, jog_y)  # Immediately apply effect
         else:
-            # No jog pinch detected - release any active jog wheel
             if self.active_jog:
                 self._release_active_jog_wheel()
-    
+
+    def _find_closest_pinch(self, pos, pinches):
+        """Finds the closest pinch to a given position."""
+        if not pinches:
+            return None
+        
+        closest_pinch = None
+        min_dist = float('inf')
+        
+        for pinch_pos in pinches:
+            dist = np.sqrt((pos[0] - pinch_pos[0])**2 + (pos[1] - pinch_pos[1])**2)
+            if dist < min_dist:
+                min_dist = dist
+                closest_pinch = pinch_pos
+        
+        return closest_pinch
+
     def _grab_slider(self, slider_name: str, x: int, y: int):
         """Grab a slider for continuous control"""
         self.active_slider = slider_name
+        self.active_slider_pos = (x, y)
         
         # Calculate and store offset for smooth interaction
         if slider_name == 'volume_fader_1':
@@ -1454,6 +1993,7 @@ class DJController:
     
     def _update_active_slider(self, x: int, y: int):
         """Update the currently active slider position"""
+        self.active_slider_pos = (x, y) # Update position
         if self.active_slider == 'volume_fader_1':
             fader = self.volume_fader_1
             adjusted_y = y - self.slider_grab_offset
@@ -1566,6 +2106,7 @@ class DJController:
     def _grab_knob(self, knob: RotaryKnob, x: int, y: int, deck: int, eq_band: str):
         """Grab a knob for rotational control"""
         self.active_knob = (knob, deck, eq_band)
+        self.active_knob_pos = (x, y)
         
         # Calculate initial angle for rotation tracking
         dx = x - knob.center_x
@@ -1577,7 +2118,8 @@ class DJController:
         print(f"Grabbed {eq_band} EQ knob for deck {deck}")
     
     def _update_active_knob(self, x: int, y: int):
-        """Update the currently active knob rotation"""
+        """Update the currently rotating knob's angle"""
+        self.active_knob_pos = (x, y) # Update position
         if not self.active_knob:
             return
             
@@ -1655,16 +2197,16 @@ class DJController:
             print(f"NAVIGATION MODE: Deck {deck} - Rotate to seek through track")
     
     def _update_active_jog_wheel(self, x: int, y: int):
-        """Update the currently active jog wheel rotation"""
+        """Update the currently active jog wheel rotation - realistic DJ controller timeline control"""
         if not self.active_jog:
             return
             
         deck = self.active_jog
         jog_wheel = self.jog_wheel_1 if deck == 1 else self.jog_wheel_2
         
-        # Calculate current angle
+        # Calculate current angle (inverted Y for proper DJ controller direction)
         dx = x - jog_wheel.center_x
-        dy = y - jog_wheel.center_y
+        dy = -(y - jog_wheel.center_y)  # Invert Y to match DJ controller behavior
         current_angle = np.arctan2(dy, dx) * 180 / np.pi
         
         # Calculate angle difference (handling wrap-around)
@@ -1676,43 +2218,64 @@ class DJController:
         elif angle_diff < -180:
             angle_diff += 360
         
+        # Invert angle difference for proper DJ controller direction
+        # Clockwise (positive screen rotation) = forward in track (positive timeline)
+        # Counter-clockwise (negative screen rotation) = backward in track (negative timeline)
+        angle_diff = -angle_diff
+        
         # Update jog wheel visual angle
         jog_wheel.current_angle += angle_diff
-        
-        # Calculate rotation speed for scratching (degrees per update)
-        self.jog_rotation_speed = angle_diff * 0.1  # Scale factor for realistic scratching
         
         # Determine behavior based on deck state
         is_playing = self.audio_engine.deck1_is_playing if deck == 1 else self.audio_engine.deck2_is_playing
         
         if is_playing:
-            # Scratching mode - apply speed change for scratching effect
-            self.audio_engine.update_scratch_speed(deck, self.jog_rotation_speed)
+            # PLAYING MODE: Real-time speed control like Rekordbox/CDJ
+            # Jog wheel controls playback speed while maintaining audio output
+            
+            # Convert jog movement to playback speed
+            # Positive = clockwise = faster/forward, Negative = counterclockwise = slower/reverse  
+            speed_change = angle_diff * 0.03  # Responsive but not too sensitive
+            playback_speed = 1.0 + speed_change  # 1.0 = normal speed
+            
+            # Clamp to reasonable range for audio quality
+            playback_speed = max(-2.0, min(3.0, playback_speed))
+            
+            # Set real-time playback speed for scratching/speed control
+            self.audio_engine.set_playback_speed(deck, playback_speed)
+            
+            direction = "FORWARD" if speed_change > 0 else "BACKWARD" if speed_change < 0 else "NORMAL"
+            print(f"JOG PLAYING: Deck {deck} {direction} | speed={playback_speed:.2f}x")
+            
         else:
-            # Navigation mode - seek through track
-            # Convert rotation to position change (full rotation = 10% of track)
-            position_change = angle_diff / 360.0 * 0.1
-            current_position = self.audio_engine.get_playback_position(deck)
-            new_position = max(0.0, min(1.0, current_position + position_change))
-            self.audio_engine.seek_track(deck, new_position)
+            # PAUSED MODE: Timeline navigation only (no audio output)
+            # Jog wheel directly moves the timeline position for beat matching
+            
+            # Convert rotation to timeline position changes - industry standard sensitivity
+            position_change_seconds = angle_diff / 360.0 * 4.0  # 360° = 4 seconds movement
+            self.audio_engine.nudge_track_position(deck, position_change_seconds)
+            
+            direction = "FORWARD" if position_change_seconds > 0 else "BACKWARD" if position_change_seconds < 0 else "STOPPED"
+            print(f"JOG PAUSED: Deck {deck} {direction} | timeline_change={position_change_seconds:.3f}s")
         
         # Update last angle for next calculation
         self.jog_last_angle = current_angle
     
     def _release_active_jog_wheel(self):
-        """Release the currently active jog wheel"""
+        """Release the currently active jog wheel - restore normal playback"""
         if self.active_jog:
             deck = self.active_jog
             jog_wheel = self.jog_wheel_1 if deck == 1 else self.jog_wheel_2
             jog_wheel.is_touching = False
             
-            # Stop scratching if it was active
+            # Reset playback speed to normal (industry standard behavior)
             is_playing = self.audio_engine.deck1_is_playing if deck == 1 else self.audio_engine.deck2_is_playing
             if is_playing:
-                self.audio_engine.stop_scratch(deck)
-                print(f"SCRATCH MODE: Released deck {deck}")
+                # Restore normal playback speed (1.0x) when jog wheel is released
+                self.audio_engine.set_playback_speed(deck, 1.0)
+                print(f"JOG RELEASED: Deck {deck} - resumed normal playback (1.0x)")
             else:
-                print(f"NAVIGATION MODE: Released deck {deck}")
+                print(f"JOG RELEASED: Deck {deck} - timeline navigation ended")
         
         self.active_jog = None
         self.jog_initial_angle = 0.0
@@ -1720,58 +2283,85 @@ class DJController:
         self.jog_rotation_speed = 0.0
     
     def update_jog_wheel_spinning(self):
-        """Update jog wheel spinning based on playback state - realistic DJ controller behavior"""
+        """Update jog wheel spinning to reflect actual song timeline - like real DJ controllers"""
         import time
         
         # Get current time for smooth rotation calculations
         current_time = time.time()
         if not hasattr(self, '_last_jog_update_time'):
             self._last_jog_update_time = current_time
+            self._last_track_positions = {1: 0.0, 2: 0.0}
             return
         
         time_delta = current_time - self._last_jog_update_time
         self._last_jog_update_time = current_time
         
-        # Update Deck 1 jog wheel
+        # Update Deck 1 jog wheel - sync with actual track timeline
         if hasattr(self.audio_engine, 'deck1_is_playing') and self.audio_engine.deck1_is_playing:
-            # Get current tempo multiplier (speed) for realistic spin rate
+            # Get actual track position for timeline sync
+            current_track_position = self.audio_engine.get_playback_position(1)
+            last_track_position = self._last_track_positions.get(1, 0.0)
+            
+            # Calculate how much the track has progressed (timeline movement)
+            track_progress = (current_track_position - last_track_position) % 1.0
+            
+            # Convert timeline progress to visual jog wheel rotation
+            # Full track (0.0 to 1.0) = multiple full rotations for visual appeal
+            timeline_rotation = track_progress * 3600  # 10 full rotations per track
+            
+            # Get current tempo multiplier for additional spinning effect
             try:
                 tempo_multiplier = self.audio_engine.get_tempo_multiplier(1)
             except:
                 tempo_multiplier = 1.0
             
-            # Calculate base rotation speed (degrees per second)
-            # Real jog wheels typically do ~33.33 RPM (200 degrees/second) at normal speed
+            # Add base visual spinning for DJ controller feel
             base_rotation_speed = 200.0  # degrees per second
-            actual_rotation_speed = base_rotation_speed * tempo_multiplier
+            visual_rotation = base_rotation_speed * tempo_multiplier * time_delta
             
             # Only update rotation if not being manually controlled
             if not (self.active_jog == 1 and self.jog_wheel_1.is_touching):
-                rotation_increment = actual_rotation_speed * time_delta
-                self.jog_wheel_1.current_angle += rotation_increment
+                # Combine timeline-based rotation with visual spinning
+                total_rotation = timeline_rotation + visual_rotation
+                self.jog_wheel_1.current_angle += total_rotation
                 
                 # Keep angle in reasonable range to prevent overflow
                 self.jog_wheel_1.current_angle = self.jog_wheel_1.current_angle % 360
+            
+            self._last_track_positions[1] = current_track_position
         
-        # Update Deck 2 jog wheel
+        # Update Deck 2 jog wheel - sync with actual track timeline
         if hasattr(self.audio_engine, 'deck2_is_playing') and self.audio_engine.deck2_is_playing:
-            # Get current tempo multiplier (speed) for realistic spin rate
+            # Get actual track position for timeline sync
+            current_track_position = self.audio_engine.get_playback_position(2)
+            last_track_position = self._last_track_positions.get(2, 0.0)
+            
+            # Calculate how much the track has progressed (timeline movement)
+            track_progress = (current_track_position - last_track_position) % 1.0
+            
+            # Convert timeline progress to visual jog wheel rotation
+            timeline_rotation = track_progress * 3600  # 10 full rotations per track
+            
+            # Get current tempo multiplier for additional spinning effect
             try:
                 tempo_multiplier = self.audio_engine.get_tempo_multiplier(2)
             except:
                 tempo_multiplier = 1.0
             
-            # Calculate base rotation speed (degrees per second)
+            # Add base visual spinning for DJ controller feel
             base_rotation_speed = 200.0  # degrees per second
-            actual_rotation_speed = base_rotation_speed * tempo_multiplier
+            visual_rotation = base_rotation_speed * tempo_multiplier * time_delta
             
             # Only update rotation if not being manually controlled
             if not (self.active_jog == 2 and self.jog_wheel_2.is_touching):
-                rotation_increment = actual_rotation_speed * time_delta
-                self.jog_wheel_2.current_angle += rotation_increment
+                # Combine timeline-based rotation with visual spinning
+                total_rotation = timeline_rotation + visual_rotation
+                self.jog_wheel_2.current_angle += total_rotation
                 
                 # Keep angle in reasonable range to prevent overflow
                 self.jog_wheel_2.current_angle = self.jog_wheel_2.current_angle % 360
+            
+            self._last_track_positions[2] = current_track_position
     
     def _draw_professional_jog_wheel(self, overlay, jog_wheel, deck_num, label):
         """Draw a realistic professional DJ controller jog wheel with all the visual elements"""
@@ -1860,9 +2450,25 @@ class DJController:
             else:
                 pos_color = (0, 100, 255)  # Blue when stopped
             
-            # Draw position indicator as a bright dot
-            cv2.circle(overlay, (pos_x, pos_y), 6, pos_color, -1)
-            cv2.circle(overlay, (pos_x, pos_y), 6, (255, 255, 255), 2)
+            # Draw enhanced position indicator
+            cv2.circle(overlay, (pos_x, pos_y), 8, pos_color, -1)
+            cv2.circle(overlay, (pos_x, pos_y), 8, (255, 255, 255), 2)
+            
+            # Draw beat sync indicator if available
+            if hasattr(self, 'visualizer'):
+                waveform_data = (self.visualizer.deck1_waveform if deck_num == 1 
+                               else self.visualizer.deck2_waveform)
+                if waveform_data and len(waveform_data.beat_times) > 0:
+                    # Find the nearest beat
+                    current_time = position * waveform_data.duration
+                    beat_distances = np.abs(waveform_data.beat_times - current_time)
+                    nearest_beat_idx = np.argmin(beat_distances)
+                    beat_distance = beat_distances[nearest_beat_idx]
+                    
+                    # Show beat sync indicator if close to a beat
+                    if beat_distance < 0.1:  # Within 100ms of a beat
+                        beat_ring_color = (0, 255, 255)  # Cyan for beat sync
+                        cv2.circle(overlay, (center_x, center_y), radius - 45, beat_ring_color, 3)
         except:
             pass  # Skip if position can't be determined
         
@@ -1888,6 +2494,118 @@ class DJController:
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, speed_color, 2)
             except:
                 pass
+    
+    def draw_enhanced_track_visualization(self, overlay):
+        """Draw comprehensive track visualization for debugging jog wheel control"""
+        # Position visualization in upper area of screen
+        viz_y_start = 50
+        viz_height = 120
+        viz_width = 400
+        
+        # Draw visualization for both decks
+        for deck_num in [1, 2]:
+            # Calculate position for this deck
+            if deck_num == 1:
+                viz_x = 100  # Left side
+            else:
+                viz_x = self.screen_width - viz_width - 100  # Right side
+            
+            # Get current track state
+            try:
+                position = self.audio_engine.get_playback_position(deck_num)
+                is_playing = (self.audio_engine.deck1_is_playing if deck_num == 1 
+                             else self.audio_engine.deck2_is_playing)
+                tempo_multiplier = self.audio_engine.get_tempo_multiplier(deck_num)
+                
+                # Get stored position info
+                if deck_num == 1:
+                    stored_position = self.audio_engine.deck1_play_position
+                    start_time = self.audio_engine.deck1_start_time
+                else:
+                    stored_position = self.audio_engine.deck2_play_position  
+                    start_time = self.audio_engine.deck2_start_time
+                    
+            except Exception as e:
+                position = 0.0
+                is_playing = False
+                tempo_multiplier = 1.0
+                stored_position = 0.0
+                start_time = 0.0
+            
+            # Background box
+            box_color = (30, 60, 30) if is_playing else (60, 30, 30)
+            cv2.rectangle(overlay, (viz_x, viz_y_start), 
+                         (viz_x + viz_width, viz_y_start + viz_height), box_color, -1)
+            cv2.rectangle(overlay, (viz_x, viz_y_start), 
+                         (viz_x + viz_width, viz_y_start + viz_height), (255, 255, 255), 2)
+            
+            # Deck title
+            title_color = (100, 255, 100) if is_playing else (255, 100, 100)
+            status_text = "PLAYING" if is_playing else "STOPPED"
+            cv2.putText(overlay, f"DECK {deck_num} - {status_text}", 
+                       (viz_x + 10, viz_y_start + 20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, title_color, 2)
+            
+            # Track progress bar (main visualization)
+            bar_x = viz_x + 10
+            bar_y = viz_y_start + 35
+            bar_width = viz_width - 20
+            bar_height = 20
+            
+            # Background track bar
+            cv2.rectangle(overlay, (bar_x, bar_y), 
+                         (bar_x + bar_width, bar_y + bar_height), (50, 50, 50), -1)
+            cv2.rectangle(overlay, (bar_x, bar_y), 
+                         (bar_x + bar_width, bar_y + bar_height), (255, 255, 255), 1)
+            
+            # Progress fill
+            progress_width = int(bar_width * position)
+            if progress_width > 0:
+                progress_color = (0, 255, 0) if is_playing else (0, 150, 255)
+                cv2.rectangle(overlay, (bar_x, bar_y), 
+                             (bar_x + progress_width, bar_y + bar_height), progress_color, -1)
+            
+            # Position marker (current playhead)
+            marker_x = bar_x + progress_width
+            cv2.line(overlay, (marker_x, bar_y - 5), (marker_x, bar_y + bar_height + 5), 
+                     (255, 255, 255), 3)
+            
+            # Detailed position information
+            import time
+            current_time = time.time()
+            
+            # Position as percentage
+            pos_text = f"Position: {position*100:.1f}%"
+            cv2.putText(overlay, pos_text, (viz_x + 10, viz_y_start + 75), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            
+            # Time information
+            estimated_track_length = 180.0  # 3 minutes
+            current_seconds = position * estimated_track_length
+            time_text = f"Time: {current_seconds:.1f}s / {estimated_track_length:.0f}s"
+            cv2.putText(overlay, time_text, (viz_x + 150, viz_y_start + 75), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            
+            # Tempo information
+            tempo_text = f"Tempo: {tempo_multiplier:.2f}x ({(tempo_multiplier-1)*100:+.1f}%)"
+            cv2.putText(overlay, tempo_text, (viz_x + 10, viz_y_start + 95), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 255), 1)
+            
+            # Jog wheel interaction status
+            jog_wheel = self.jog_wheel_1 if deck_num == 1 else self.jog_wheel_2
+            if self.active_jog == deck_num and jog_wheel.is_touching:
+                jog_text = "JOG ACTIVE - CONTROLLING TIMELINE"
+                jog_color = (255, 255, 0)  # Yellow
+            else:
+                jog_text = "Jog wheel inactive"
+                jog_color = (150, 150, 150)  # Gray
+            cv2.putText(overlay, jog_text, (viz_x + 150, viz_y_start + 95), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, jog_color, 1)
+            
+            # Debug information (stored vs calculated position)
+            debug_text = f"Stored: {stored_position:.1f}s | Calc: {current_seconds:.1f}s"
+            cv2.putText(overlay, debug_text, (viz_x + 10, viz_y_start + 115), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.3, (200, 200, 200), 1)
     
     def draw_controller_overlay(self, frame):
         """Draw the DJ controller overlay on the frame"""
@@ -1926,8 +2644,8 @@ class DJController:
             cv2.circle(overlay, (button.x + button.width//2, button.y + button.height//2), 20, (255, 255, 255), 2)
             cv2.putText(overlay, button.name, (button.x - 10, button.y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
-        # Draw track visualization bars
-        self.draw_track_visualization(overlay, center_x, center_y)
+        # Draw Rekordbox-style stacked track visualization
+        self.visualizer.draw_stacked_visualization(overlay, self.audio_engine)
         
         # Draw volume section - centered
         vol_rect = (center_x - 85, center_y + 20, 170, 180)
@@ -2148,14 +2866,16 @@ class DJController:
             if track1:
                 self.deck1_track = track1
                 self.audio_engine.load_track(1, track1)
+                # Load waveform data for visualization
+                self.visualizer.set_track_waveform(1, track1)
                 # Set cue point at beginning (professional default)
                 self.audio_engine.set_cue_point(1, 0.0)
                 # Set default buttons active for deck 1 - both vocal and instrumental ON for full track
                 self.deck1_buttons["vocal"].is_active = True
                 self.deck1_buttons["instrumental"].is_active = True
-                # Ensure audio engine reflects these settings (but start muted)
-                self.audio_engine.deck1_active_stems["vocals"] = True
-                self.audio_engine.deck1_active_stems["instrumental"] = True
+                # Ensure audio engine reflects these settings properly
+                self.audio_engine.set_stem_volume(1, "vocals", 0.7)
+                self.audio_engine.set_stem_volume(1, "instrumental", 0.7)
                 print(f"Loaded '{track1.name}' into Deck 1 (cue point: beginning)")
         
         if len(self.track_loader.available_tracks) >= 2:
@@ -2163,14 +2883,16 @@ class DJController:
             if track2:
                 self.deck2_track = track2
                 self.audio_engine.load_track(2, track2)
+                # Load waveform data for visualization
+                self.visualizer.set_track_waveform(2, track2)
                 # Set cue point at beginning (professional default)
                 self.audio_engine.set_cue_point(2, 0.0)
                 # Set default buttons active for deck 2 - both vocal and instrumental ON for full track
                 self.deck2_buttons["vocal"].is_active = True
                 self.deck2_buttons["instrumental"].is_active = True
-                # Ensure audio engine reflects these settings (but start muted)
-                self.audio_engine.deck2_active_stems["vocals"] = True
-                self.audio_engine.deck2_active_stems["instrumental"] = True
+                # Ensure audio engine reflects these settings properly
+                self.audio_engine.set_stem_volume(2, "vocals", 0.7)
+                self.audio_engine.set_stem_volume(2, "instrumental", 0.7)
                 print(f"Loaded '{track2.name}' into Deck 2 (cue point: beginning)")
     
     def draw_fingertip_landmarks(self, frame, results):
@@ -2243,6 +2965,117 @@ class DJController:
                     connect_x = (middle_x + index_x) // 2
                     connect_y = (middle_y + index_y) // 2
                     cv2.circle(frame, (connect_x, connect_y), 12, (255, 255, 255), -1)
+    
+    def load_default_tracks(self):
+        """Load default tracks into both decks with easy song selection"""
+        
+        # ===== EASY SONG SELECTION - PASTE SONG NAMES HERE =====
+        # Set the song names you want to load (or leave as None for automatic)
+        # Copy exact folder names from your songs directory
+        
+        DECK1_SONG = "[fadr.com] Stems - Kesha - Die Young (Lyrics)"  # <-- PASTE DECK 1 SONG NAME HERE
+        DECK2_SONG = "[fadr.com] Stems - Avicii - Levels (Lyrics)"  # <-- PASTE DECK 2 SONG NAME HERE
+        
+        # Example:
+        # DECK1_SONG = "Fred again.. - Jungle (SIDEPIECE Remix)"
+        # DECK2_SONG = "Another Song - Remix"
+        # ======================================================
+        
+        # Scan available tracks
+        self.track_loader.scan_tracks()
+        
+        if len(self.track_loader.available_tracks) == 0:
+            print("❌ No tracks found in songs folder!")
+            return
+            
+        # Display available tracks for reference
+        print(f"📁 Found {len(self.track_loader.available_tracks)} available tracks:")
+        for i, track in enumerate(self.track_loader.available_tracks):
+            print(f"  {i+1}: {track.name}")
+        print()
+        
+        # Load specific songs if specified
+        if DECK1_SONG:
+            track1 = self._find_track_by_name(DECK1_SONG)
+            if track1:
+                self._load_track_to_deck(1, track1)
+                print(f"🎵 DECK 1: Loaded '{track1.name}'")
+            else:
+                print(f"❌ DECK 1: Track '{DECK1_SONG}' not found!")
+                print("Loading first available track instead...")
+                track1 = self.track_loader.get_track(0)
+                if track1:
+                    self._load_track_to_deck(1, track1)
+        else:
+            # Load first available track
+            track1 = self.track_loader.get_track(0)
+            if track1:
+                self._load_track_to_deck(1, track1)
+                print(f"🎵 DECK 1: Auto-loaded '{track1.name}'")
+        
+        if DECK2_SONG:
+            track2 = self._find_track_by_name(DECK2_SONG)
+            if track2:
+                self._load_track_to_deck(2, track2)
+                print(f"🎵 DECK 2: Loaded '{track2.name}'")
+            else:
+                print(f"❌ DECK 2: Track '{DECK2_SONG}' not found!")
+                print("Loading second available track instead...")
+                track2 = self.track_loader.get_track(1) if len(self.track_loader.available_tracks) > 1 else self.track_loader.get_track(0)
+                if track2:
+                    self._load_track_to_deck(2, track2)
+        else:
+            # Load second available track, or first if only one available
+            track2 = self.track_loader.get_track(1) if len(self.track_loader.available_tracks) > 1 else self.track_loader.get_track(0)
+            if track2:
+                self._load_track_to_deck(2, track2)
+                print(f"🎵 DECK 2: Auto-loaded '{track2.name}'")
+        
+        print("✅ Track loading complete!")
+        print()
+    
+    def _find_track_by_name(self, song_name: str):
+        """Find a track by its folder name (exact match or partial match)"""
+        # First try exact match
+        for track in self.track_loader.available_tracks:
+            if track.name == song_name:
+                return track
+        
+        # Then try partial match (contains)
+        for track in self.track_loader.available_tracks:
+            if song_name.lower() in track.name.lower():
+                return track
+        
+        return None
+    
+    def _load_track_to_deck(self, deck: int, track):
+        """Load a specific track to a specific deck with proper setup"""
+        if deck == 1:
+            self.deck1_track = track
+            self.audio_engine.load_track(1, track)
+            # Load waveform data for visualization
+            self.visualizer.set_track_waveform(1, track)
+            # Set cue point at beginning (professional default)
+            self.audio_engine.set_cue_point(1, 0.0)
+            # Set default buttons active - both vocal and instrumental ON
+            self.deck1_buttons["vocal"].is_active = True
+            self.deck1_buttons["instrumental"].is_active = True
+            # Ensure audio engine reflects these settings properly
+            self.audio_engine.set_stem_volume(1, "vocals", 0.7)
+            self.audio_engine.set_stem_volume(1, "instrumental", 0.7)
+        elif deck == 2:
+            self.deck2_track = track
+            self.audio_engine.load_track(2, track)
+            # Load waveform data for visualization
+            self.visualizer.set_track_waveform(2, track)
+            # Set cue point at beginning (professional default)
+            self.audio_engine.set_cue_point(2, 0.0)
+            # Set default buttons active - both vocal and instrumental ON
+            self.deck2_buttons["vocal"].is_active = True
+            self.deck2_buttons["instrumental"].is_active = True
+            # Ensure audio engine reflects these settings properly
+            self.audio_engine.set_stem_volume(2, "vocals", 0.7)
+            self.audio_engine.set_stem_volume(2, "instrumental", 0.7)
     
     def run(self):
         """Main loop for the DJ controller"""

@@ -2,4 +2,6 @@ opencv-python>=4.7.0
 mediapipe>=0.10.0
 pyo>=1.0.0
 numpy>=1.20.0
-tensorflow-macos>=2.9.0 
+tensorflow-macos>=2.9.0
+librosa>=0.10.0
+scipy>=1.9.0 
