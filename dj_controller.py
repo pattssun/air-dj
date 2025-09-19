@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from enum import Enum
 import threading
 import queue
+import traceback
 
 # Audio processing
 try:
@@ -98,16 +99,17 @@ class Track:
 @dataclass
 class WaveformData:
     """Represents waveform analysis data for visualization"""
-    audio_data: np.ndarray  # Raw audio samples
-    sample_rate: int
     duration: float
-    waveform_peaks: np.ndarray  # Peak values for visualization
-    beat_times: np.ndarray  # Beat positions in seconds
-    bar_times: np.ndarray  # Bar positions in seconds
-    tempo: float
-    
+    # Peaks for different frequency bands
+    low_freq_peaks: np.ndarray
+    mid_freq_peaks: np.ndarray
+    high_freq_peaks: np.ndarray
+    # Beat grid information
+    beat_times: np.ndarray
+    bar_times: np.ndarray
+
 class WaveformAnalyzer:
-    """Analyzes audio files to extract waveform and beat information"""
+    """Analyzes audio files to extract multi-band waveform and beat information."""
     
     def __init__(self):
         self.cache = {}  # Cache analyzed waveforms
@@ -115,38 +117,66 @@ class WaveformAnalyzer:
     def analyze_track(self, track: Track) -> Optional[WaveformData]:
         """Analyze a track and return waveform data"""
         if not AUDIO_ANALYSIS_AVAILABLE:
+            print("❌ Audio analysis libraries not available!")
             return None
             
         cache_key = f"{track.name}_{track.bpm}"
         if cache_key in self.cache:
+            print(f"✅ Using cached waveform for {track.name}")
             return self.cache[cache_key]
+        
+        print(f"🔄 Analyzing track: {track.name}")
+        print(f"   Available stems: {list(track.stems.keys()) if track.stems else 'None'}")
             
         try:
             # Use instrumental stem as primary source for waveform
             primary_stem = None
             if "instrumental" in track.stems:
                 primary_stem = track.stems["instrumental"]
-            elif "bass" in track.stems:
-                primary_stem = track.stems["bass"]
             elif track.stems:
                 primary_stem = list(track.stems.values())[0]
+            else:
+                # Fallback: try to find any audio file in the track folder
+                if hasattr(track, 'folder_path') and os.path.exists(track.folder_path):
+                    # Look for any .mp3 or .wav file in the folder
+                    for file in os.listdir(track.folder_path):
+                        if file.lower().endswith(('.mp3', '.wav')):
+                            primary_stem = os.path.join(track.folder_path, file)
+                            break
                 
+            print(f"   Primary audio file: {primary_stem}")
+            
             if not primary_stem or not os.path.exists(primary_stem):
+                print(f"❌ Audio file not found: {primary_stem}")
                 return None
                 
             # Load audio file
+            print(f"   Loading audio with librosa...")
             audio_data, sample_rate = librosa.load(primary_stem, sr=44100)
-            duration = len(audio_data) / sample_rate
+            duration = librosa.get_duration(y=audio_data, sr=sample_rate)
+            print(f"   ✅ Audio loaded: {duration:.1f}s, {len(audio_data)} samples")
             
-            # Generate waveform peaks for visualization (downsampled)
-            hop_length = 1024
-            frame_length = 2048
-            waveform_peaks = self._generate_waveform_peaks(audio_data, hop_length)
+            # --- Enhanced Frequency Band Separation (Professional DJ Standards) ---
+            hop_length = 512  # Smaller hop for better time resolution
+            stft = librosa.stft(audio_data, hop_length=hop_length, n_fft=2048)
+            freqs = librosa.fft_frequencies(sr=sample_rate, n_fft=2048)
             
-            # Beat tracking
-            tempo, beat_frames = librosa.beat.beat_track(
-                y=audio_data, sr=sample_rate, hop_length=hop_length
-            )
+            # Professional DJ frequency ranges optimized for mixing
+            LOW_FREQ_CUTOFF = 200    # Bass/sub-bass (20-200 Hz)
+            MID_FREQ_CUTOFF = 2000   # Mids (200-2000 Hz) 
+            HIGH_FREQ_START = 2000   # Highs (2000+ Hz)
+            
+            low_mask = freqs <= LOW_FREQ_CUTOFF
+            mid_mask = (freqs > LOW_FREQ_CUTOFF) & (freqs <= MID_FREQ_CUTOFF)
+            high_mask = freqs > HIGH_FREQ_START
+            
+            # --- Generate Enhanced Peaks for Each Band ---
+            low_peaks = self._generate_waveform_peaks_for_band(stft, low_mask, hop_length)
+            mid_peaks = self._generate_waveform_peaks_for_band(stft, mid_mask, hop_length)
+            high_peaks = self._generate_waveform_peaks_for_band(stft, high_mask, hop_length)
+            
+            # --- Beat Tracking ---
+            tempo, beat_frames = librosa.beat.beat_track(y=audio_data, sr=sample_rate, hop_length=hop_length)
             beat_times = librosa.frames_to_time(beat_frames, sr=sample_rate, hop_length=hop_length)
             
             # Generate bar times (assuming 4/4 time signature)
@@ -154,63 +184,114 @@ class WaveformAnalyzer:
             bar_beats = beat_frames[::beats_per_bar]
             bar_times = librosa.frames_to_time(bar_beats, sr=sample_rate, hop_length=hop_length)
             
+            print(f"   ✅ Analysis complete!")
+            print(f"   Low peaks: {len(low_peaks)}, Mid peaks: {len(mid_peaks)}, High peaks: {len(high_peaks)}")
+            print(f"   Beats: {len(beat_times)}, Bars: {len(bar_times)}")
+            
             waveform_data = WaveformData(
-                audio_data=audio_data,
-                sample_rate=sample_rate,
-                duration=duration,
-                waveform_peaks=waveform_peaks,
+                duration=float(duration),
+                low_freq_peaks=low_peaks,
+                mid_freq_peaks=mid_peaks,
+                high_freq_peaks=high_peaks,
                 beat_times=beat_times,
                 bar_times=bar_times,
-                tempo=float(tempo)
             )
             
             self.cache[cache_key] = waveform_data
+            print(f"   💾 Cached waveform data for {track.name}")
             return waveform_data
             
         except Exception as e:
             print(f"Error analyzing track {track.name}: {e}")
+            traceback.print_exc()
             return None
             
-    def _generate_waveform_peaks(self, audio_data: np.ndarray, hop_length: int) -> np.ndarray:
-        """Generate downsampled waveform peaks for visualization"""
-        # Calculate RMS energy in frames
-        frame_length = hop_length * 2
-        energy = librosa.feature.rms(
-            y=audio_data, 
-            frame_length=frame_length, 
-            hop_length=hop_length
-        )[0]
+    def _generate_waveform_peaks_for_band(self, stft, freq_mask, hop_length):
+        """Generates enhanced stereo-style waveform peaks for professional DJ visualization."""
+        band_stft = stft[freq_mask, :]
         
-        # Normalize to 0-1 range
-        if len(energy) > 0:
-            energy = (energy - np.min(energy)) / (np.max(energy) - np.min(energy) + 1e-8)
+        # Calculate magnitude and apply log compression for better visual dynamics
+        magnitude = np.abs(band_stft)
+        band_energy = np.mean(magnitude, axis=0)  # Average across frequency bins
         
-        return energy
+        # Apply logarithmic compression for better visual dynamics (like professional software)
+        band_energy = np.log1p(band_energy * 100) / np.log(101)  # Compress to 0-1 range
+        
+        # Remove any NaN/inf values early in the pipeline
+        band_energy = np.nan_to_num(band_energy, nan=0.0, posinf=1.0, neginf=0.0)
+        
+        # Smooth the signal to reduce noise
+        try:
+            from scipy import ndimage
+            band_energy = ndimage.gaussian_filter1d(band_energy, sigma=1.0)
+        except ImportError:
+            pass  # Skip smoothing if scipy not available
+        
+        # Downsample for visualization while maintaining peak information
+        num_frames = len(band_energy)
+        target_points = min(4000, num_frames)  # Higher resolution for professional look
+        
+        if num_frames > target_points:
+            # Use simple resampling if scipy not available
+            try:
+                from scipy.signal import resample
+                downsampled = resample(band_energy, target_points)
+            except ImportError:
+                # Fallback to simple downsampling
+                downsample_factor = num_frames // target_points
+                if downsample_factor > 1:
+                    trimmed_length = (num_frames // downsample_factor) * downsample_factor
+                    reshaped = band_energy[:trimmed_length].reshape(-1, downsample_factor)
+                    downsampled = np.max(reshaped, axis=1)
+                else:
+                    downsampled = band_energy
+        else:
+            downsampled = band_energy
+            
+        # Normalize to 0-1 range with slight boost for better visibility
+        if np.max(downsampled) > 0:
+            downsampled = downsampled / np.max(downsampled)
+            downsampled = np.power(downsampled, 0.7)  # Gamma correction for better contrast
+        
+        # Remove any NaN or infinite values that could cause rendering issues
+        downsampled = np.nan_to_num(downsampled, nan=0.0, posinf=1.0, neginf=0.0)
+        
+        # Ensure all values are in valid range [0, 1]
+        downsampled = np.clip(downsampled, 0.0, 1.0)
+            
+        return downsampled
 
 class RekordboxStyleVisualizer:
-    """Professional DJ software style track visualization"""
+    """Professional DJ software style track visualization with scrolling waveforms."""
     
     def __init__(self, screen_width: int, screen_height: int):
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.waveform_analyzer = WaveformAnalyzer()
         
-        # Track visualization settings
-        self.track_height = 120
-        self.track_spacing = 20
-        self.waveform_height = 60
-        self.timeline_height = 30
+        # --- Professional Visualization Settings ---
+        self.track_height = 100  # Increased height for better visibility
+        self.track_spacing = 10  # More spacing between tracks
+        self.waveform_height = 70  # Max height of the waveform peaks
+        self.visible_seconds = 16.0  # More visible audio for better context
+        self.center_line_thickness = 2  # Prominent center playhead
+
+        # --- Professional Rekordbox Colors ---
+        self.bg_color = (20, 20, 20)  # Very dark gray (not pure black)
         
-        # Colors (Rekordbox-inspired professional theme)
-        self.bg_color = (25, 25, 30)          # Dark background
-        self.waveform_color = (100, 180, 255) # Bright blue waveform
-        self.played_color = (255, 150, 50)    # Orange for played portion
-        self.beat_color = (80, 80, 80)        # Subtle gray beat lines
-        self.bar_color = (120, 120, 120)      # More visible gray for bars
-        self.playhead_color = (255, 255, 255) # White playhead
-        self.cue_color = (255, 255, 50)       # Bright yellow cue point
-        self.deck_border = (70, 70, 75)       # Professional border color
-        self.text_color = (240, 240, 240)     # Light text
+        # Frequency band colors (matching Rekordbox exactly)
+        self.low_freq_color = (65, 180, 255)    # Bright blue for bass
+        self.mid_freq_color = (255, 165, 80)    # Orange for mids  
+        self.high_freq_color = (240, 240, 240)  # Bright white for highs
+        
+        # Grid and UI colors
+        self.beat_color = (60, 60, 60)          # Subtle beat lines
+        self.bar_color = (100, 100, 100)        # More prominent bar lines
+        self.major_bar_color = (140, 140, 140)  # Every 4th bar more prominent
+        self.playhead_color = (255, 100, 100)   # Red center playhead like Rekordbox
+        self.playhead_shadow = (120, 50, 50)    # Shadow for depth
+        self.bpm_color = (100, 200, 255)        # Blue for BPM display
+        self.text_color = (200, 200, 200)     # Light gray text
         
         # Cached waveform data
         self.deck1_waveform: Optional[WaveformData] = None
@@ -218,106 +299,257 @@ class RekordboxStyleVisualizer:
         
     def set_track_waveform(self, deck: int, track: Track):
         """Load and cache waveform data for a track"""
+        print(f"🎵 Setting waveform for Deck {deck}: {track.name}")
         waveform_data = self.waveform_analyzer.analyze_track(track)
         if deck == 1:
             self.deck1_waveform = waveform_data
+            print(f"   Deck 1 waveform set: {waveform_data is not None}")
         else:
             self.deck2_waveform = waveform_data
+            print(f"   Deck 2 waveform set: {waveform_data is not None}")
             
     def draw_stacked_visualization(self, overlay, audio_engine):
-        """Draw Rekordbox-style stacked track visualization"""
-        # Calculate layout
-        viz_start_x = 50
-        viz_width = self.screen_width - 100
-        viz_start_y = 30
+        """Draw professional Rekordbox-style stacked track visualization"""
+        print(f"🎨 Drawing visualization - Deck1: {self.deck1_waveform is not None}, Deck2: {self.deck2_waveform is not None}")
+        # Calculate professional layout with proper proportions
+        margin = 80
+        viz_width = self.screen_width - (2 * margin)
+        viz_start_x = margin
+        center_x = self.screen_width // 2
+        
+        # Calculate total visualization area height
+        total_viz_height = (self.track_height * 2) + self.track_spacing + 60  # Extra for labels
+        viz_start_y = 40  # Start from top
+        
+        # Draw clean background panel for the entire visualization area
+        bg_rect = (viz_start_x - 10, viz_start_y - 20, 
+                   viz_width + 20, total_viz_height + 40)
+        cv2.rectangle(overlay, (bg_rect[0], bg_rect[1]), 
+                     (bg_rect[0] + bg_rect[2], bg_rect[1] + bg_rect[3]), 
+                     self.bg_color, -1)
+        
+        # Draw subtle border around visualization area
+        cv2.rectangle(overlay, (bg_rect[0], bg_rect[1]), 
+                     (bg_rect[0] + bg_rect[2], bg_rect[1] + bg_rect[3]), 
+                     (50, 50, 50), 1)
         
         # Draw Deck 1 (top)
         deck1_y = viz_start_y
         self._draw_deck_visualization(
-            overlay, 1, viz_start_x, deck1_y, viz_width, 
+            overlay, 1, viz_start_x, deck1_y, viz_width, center_x,
             self.deck1_waveform, audio_engine
         )
+        
+        # Draw separator line between decks
+        separator_y = deck1_y + self.track_height + (self.track_spacing // 2)
+        cv2.line(overlay, (viz_start_x, separator_y), 
+                (viz_start_x + viz_width, separator_y), (60, 60, 60), 1)
         
         # Draw Deck 2 (bottom)
         deck2_y = deck1_y + self.track_height + self.track_spacing
         self._draw_deck_visualization(
-            overlay, 2, viz_start_x, deck2_y, viz_width, 
+            overlay, 2, viz_start_x, deck2_y, viz_width, center_x,
             self.deck2_waveform, audio_engine
         )
         
+        # Draw central playhead line across both decks (most prominent feature)
+        playhead_x = center_x
+        playhead_top = deck1_y
+        playhead_bottom = deck2_y + self.track_height
+        
+        # Draw shadow for depth
+        cv2.line(overlay, (playhead_x + 1, playhead_top), 
+                (playhead_x + 1, playhead_bottom), self.playhead_shadow, 3)
+        
+        # Draw main playhead line
+        cv2.line(overlay, (playhead_x, playhead_top), 
+                (playhead_x, playhead_bottom), self.playhead_color, 2)
+        
     def _draw_deck_visualization(self, overlay, deck_num: int, x: int, y: int, 
-                               width: int, waveform_data: Optional[WaveformData], 
+                               width: int, center_x: int, waveform_data: Optional[WaveformData], 
                                audio_engine):
-        """Draw visualization for a single deck"""
-        # Professional background with gradient effect
-        cv2.rectangle(overlay, (x, y), (x + width, y + self.track_height), 
-                     self.bg_color, -1)
-        cv2.rectangle(overlay, (x, y), (x + width, y + self.track_height), 
-                     self.deck_border, 2)
+        """Draw a professional Rekordbox-style visualization for a single deck."""
         
-        # Add subtle gradient effect (top lighter)
-        gradient_height = 15
-        for i in range(gradient_height):
-            alpha = 0.3 - (i * 0.02)
-            gray_val = int(50 + i * 2)
-            cv2.line(overlay, (x + 2, y + 2 + i), (x + width - 2, y + 2 + i), 
-                    (gray_val, gray_val, gray_val), 1)
-        
-        # Deck label
-        deck_name = f"DECK {deck_num}"
+        if waveform_data is None or waveform_data.duration == 0:
+            # Draw professional empty track placeholder
+            placeholder_rect = (x, y, width, self.track_height)
+            cv2.rectangle(overlay, (placeholder_rect[0], placeholder_rect[1]), 
+                         (placeholder_rect[0] + placeholder_rect[2], placeholder_rect[1] + placeholder_rect[3]), 
+                         (30, 30, 30), -1)
+            cv2.putText(overlay, f"DECK {deck_num}: LOAD TRACK", (x + 20, y + 45),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, self.text_color, 2)
+            return
+
+        # --- Get Track and Timing Info ---
+        position_ratio = audio_engine.get_playback_position(deck_num)
+        current_time_sec = position_ratio * waveform_data.duration
         is_playing = (audio_engine.deck1_is_playing if deck_num == 1 
                      else audio_engine.deck2_is_playing)
-        label_color = (100, 255, 100) if is_playing else (200, 200, 200)
         
-        cv2.putText(overlay, deck_name, (x + 10, y + 20), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, label_color, 2)
+        # Get track for BPM and name
+        track = audio_engine.deck1_track if deck_num == 1 else audio_engine.deck2_track
+        track_name = track.name if track else "Unknown Track"
+        track_bpm = track.bpm if track else 120.0
+
+        # --- Draw Enhanced Waveform ---
+        self._draw_scrolling_waveform(overlay, x, y, width, center_x,
+                                      waveform_data, current_time_sec)
+
+        # --- Draw Professional Track Info ---
+        # Track name (top left)
+        truncated_name = track_name[:35] + "..." if len(track_name) > 35 else track_name
+        cv2.putText(overlay, f"DECK {deck_num}: {truncated_name}", (x + 5, y - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.text_color, 1)
         
-        # Get current position
-        try:
-            position = audio_engine.get_playback_position(deck_num)
-            tempo_multiplier = audio_engine.get_tempo_multiplier(deck_num)
-        except:
-            position = 0.0
-            tempo_multiplier = 1.0
+        # BPM display (top right, like Rekordbox)
+        bpm_text = f"{track_bpm:.1f} BPM"
+        text_size = cv2.getTextSize(bpm_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+        bpm_x = x + width - text_size[0] - 10
+        cv2.putText(overlay, bpm_text, (bpm_x, y - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, self.bpm_color, 2)
+        
+        # Time position display (bottom right)
+        minutes = int(current_time_sec // 60)
+        seconds = int(current_time_sec % 60)
+        time_text = f"{minutes:02d}:{seconds:02d}"
+        time_size = cv2.getTextSize(time_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+        time_x = x + width - time_size[0] - 10
+        cv2.putText(overlay, time_text, (time_x, y + self.track_height - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.text_color, 1)
+        
+        # Play/pause indicator (bottom left)
+        status_text = "▶ PLAYING" if is_playing else "⏸ PAUSED"
+        status_color = (100, 255, 100) if is_playing else (255, 100, 100)
+        cv2.putText(overlay, status_text, (x + 5, y + self.track_height - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, status_color, 1)
+
+    def _draw_scrolling_waveform(self, overlay, x: int, y: int, width: int, center_x: int,
+                                 waveform_data: WaveformData, current_time: float):
+        """Draws professional Rekordbox-style stereo waveform with enhanced beat/bar grid."""
+        
+        # --- Calculate Precise Audio Window ---
+        seconds_per_pixel = self.visible_seconds / width
+        start_time = current_time - (center_x - x) * seconds_per_pixel
+        end_time = current_time + (x + width - center_x) * seconds_per_pixel
+        time_to_pixel = lambda t: int(x + (t - start_time) / seconds_per_pixel)
+
+        # Waveform area setup
+        waveform_center_y = y + self.track_height // 2
+        max_amplitude = self.waveform_height // 2
+        
+        # --- Draw Enhanced Beat and Bar Grid (Professional Style) ---
+        bar_count = 0
+        for bar_time in waveform_data.bar_times:
+            if start_time <= bar_time <= end_time:
+                px = time_to_pixel(bar_time)
+                # Every 4th bar gets special prominence (phrase markers)
+                if bar_count % 4 == 0:
+                    cv2.line(overlay, (px, y + 5), (px, y + self.track_height - 5), 
+                            self.major_bar_color, 2)
+                else:
+                    cv2.line(overlay, (px, y + 10), (px, y + self.track_height - 10), 
+                            self.bar_color, 1)
+                bar_count += 1
+        
+        # Beat lines (more subtle)
+        for beat_time in waveform_data.beat_times:
+            if start_time <= beat_time <= end_time:
+                px = time_to_pixel(beat_time)
+                cv2.line(overlay, (px, y + 25), (px, y + self.track_height - 25), 
+                        self.beat_color, 1)
+
+        # --- Draw Stereo-Style Multi-Band Waveforms ---
+        # Bass (bottom layer, wider)
+        self._render_stereo_waveform_band(overlay, width, x, waveform_center_y, start_time, 
+                                         seconds_per_pixel, waveform_data.duration, 
+                                         waveform_data.low_freq_peaks, self.low_freq_color, 
+                                         max_amplitude, alpha=0.8)
+        
+        # Mids (middle layer)
+        self._render_stereo_waveform_band(overlay, width, x, waveform_center_y, start_time, 
+                                         seconds_per_pixel, waveform_data.duration, 
+                                         waveform_data.mid_freq_peaks, self.mid_freq_color, 
+                                         max_amplitude * 0.7, alpha=0.9)
+        
+        # Highs (top layer, thinner but most prominent)
+        self._render_stereo_waveform_band(overlay, width, x, waveform_center_y, start_time, 
+                                         seconds_per_pixel, waveform_data.duration, 
+                                         waveform_data.high_freq_peaks, self.high_freq_color, 
+                                         max_amplitude * 0.5, alpha=1.0)
+
+    def _render_stereo_waveform_band(self, overlay, width, x, center_y, start_time, 
+                                    seconds_per_pixel, duration, peaks, color, max_height, alpha=1.0):
+        """Renders professional stereo-style waveform band (like Rekordbox)."""
+        if len(peaks) == 0 or duration == 0:
+            return
+
+        peaks_per_second = len(peaks) / duration
+        # Apply alpha blending to color
+        blended_color = tuple(int(c * alpha) for c in color)
+
+        # Pre-calculate all points for smooth rendering
+        waveform_points_top = []
+        waveform_points_bottom = []
+        
+        for i in range(width):
+            pixel_time = start_time + i * seconds_per_pixel
+            if not (0 <= pixel_time <= duration):
+                continue
+
+            peak_index = int(pixel_time * peaks_per_second)
+            if 0 <= peak_index < len(peaks):
+                # Create stereo-style symmetric waveform
+                peak_value = peaks[peak_index]
+                
+                # Handle NaN/inf values safely
+                if np.isnan(peak_value) or np.isinf(peak_value):
+                    peak_value = 0.0
+                
+                amplitude = peak_value * max_height
+                
+                # Ensure amplitude is valid and within bounds
+                amplitude = max(0, min(amplitude, max_height))
+                
+                # Top waveform (positive)
+                top_y = int(center_y - amplitude)
+                waveform_points_top.append((x + i, top_y))
+                
+                # Bottom waveform (negative, mirrored)
+                bottom_y = int(center_y + amplitude)
+                waveform_points_bottom.append((x + i, bottom_y))
+        
+        # Draw filled waveform areas for professional look
+        if len(waveform_points_top) >= 2:
+            # Create filled polygon for top half
+            top_polygon = [(x, center_y)] + waveform_points_top + [(x + width, center_y)]
+            if len(top_polygon) >= 3:
+                try:
+                    cv2.fillPoly(overlay, [np.array(top_polygon, np.int32)], blended_color)
+                except:
+                    pass  # Skip if polygon is invalid
             
-        # Waveform area
-        waveform_x = x + 10
-        waveform_y = y + 35
-        waveform_width = width - 20
+            # Create filled polygon for bottom half
+            bottom_polygon = [(x, center_y)] + waveform_points_bottom + [(x + width, center_y)]
+            if len(bottom_polygon) >= 3:
+                try:
+                    cv2.fillPoly(overlay, [np.array(bottom_polygon, np.int32)], blended_color)
+                except:
+                    pass  # Skip if polygon is invalid
         
-        if waveform_data is not None:
-            self._draw_waveform_with_beats(
-                overlay, waveform_x, waveform_y, waveform_width, 
-                waveform_data, position, is_playing
-            )
-        else:
-            # Fallback visualization without waveform data
-            self._draw_simple_timeline(
-                overlay, waveform_x, waveform_y, waveform_width, 
-                position, is_playing
-            )
-            
-        # Track info
-        track_name = "No Track Loaded"
-        if deck_num == 1 and audio_engine.deck1_track:
-            track_name = audio_engine.deck1_track.name
-        elif deck_num == 2 and audio_engine.deck2_track:
-            track_name = audio_engine.deck2_track.name
-            
-        cv2.putText(overlay, track_name[:45], (x + 200, y + 20), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.45, self.text_color, 1)
-        
-        # Tempo info with professional formatting
-        tempo_text = f"♪ {tempo_multiplier:.1%}"
-        tempo_color = (50, 255, 150) if abs(tempo_multiplier - 1.0) < 0.01 else (255, 200, 50)
-        cv2.putText(overlay, tempo_text, (x + width - 120, y + 20), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, tempo_color, 1)
-        
-        # Add position info
-        position_text = f"{position:.1%}"
-        cv2.putText(overlay, position_text, (x + width - 200, y + 110), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.35, self.text_color, 1)
-        
+        # Draw outline for definition
+        if len(waveform_points_top) >= 2:
+            for i in range(len(waveform_points_top) - 1):
+                cv2.line(overlay, waveform_points_top[i], waveform_points_top[i + 1], color, 1)
+                cv2.line(overlay, waveform_points_bottom[i], waveform_points_bottom[i + 1], color, 1)
+
+    def _render_waveform_band(self, overlay, width, x, y, start_time, seconds_per_pixel,
+                              duration, peaks, color):
+        """Legacy function - redirects to stereo version."""
+        center_y = y + self.track_height // 2
+        max_height = self.waveform_height // 2
+        self._render_stereo_waveform_band(overlay, width, x, center_y, start_time, 
+                                         seconds_per_pixel, duration, peaks, color, max_height)
+
     def _draw_waveform_with_beats(self, overlay, x: int, y: int, width: int, 
                                 waveform_data: WaveformData, position: float, 
                                 is_playing: bool):
@@ -326,7 +558,7 @@ class RekordboxStyleVisualizer:
         self._draw_beat_grid(overlay, x, y, width, waveform_data, position)
         
         # Draw waveform
-        peaks = waveform_data.waveform_peaks
+        peaks = waveform_data.low_freq_peaks
         if len(peaks) == 0:
             return
             
@@ -1755,9 +1987,9 @@ class DJController:
         self.audio_engine.set_crossfader_position(crossfader_value)
     
     def check_crossfader_collision(self, x: int, y: int) -> bool:
-        """Check if coordinates collide with crossfader (expanded area for easier interaction)"""
-        margin = 15  # Larger margin for easier interaction
-        return (self.crossfader.x - margin <= x <= self.crossfader.x + self.crossfader.width + margin and 
+        """Check if coordinates are within the crossfader's draggable area"""
+        margin = 15  # Add margin for easier grabbing
+        return (self.crossfader.x - margin <= x <= self.crossfader.x + self.crossfader.width + margin and
                 self.crossfader.y - margin <= y <= self.crossfader.y + self.crossfader.height + margin)
     
     def draw_track_visualization(self, overlay, center_x: int, center_y: int):
@@ -2495,118 +2727,6 @@ class DJController:
             except:
                 pass
     
-    def draw_enhanced_track_visualization(self, overlay):
-        """Draw comprehensive track visualization for debugging jog wheel control"""
-        # Position visualization in upper area of screen
-        viz_y_start = 50
-        viz_height = 120
-        viz_width = 400
-        
-        # Draw visualization for both decks
-        for deck_num in [1, 2]:
-            # Calculate position for this deck
-            if deck_num == 1:
-                viz_x = 100  # Left side
-            else:
-                viz_x = self.screen_width - viz_width - 100  # Right side
-            
-            # Get current track state
-            try:
-                position = self.audio_engine.get_playback_position(deck_num)
-                is_playing = (self.audio_engine.deck1_is_playing if deck_num == 1 
-                             else self.audio_engine.deck2_is_playing)
-                tempo_multiplier = self.audio_engine.get_tempo_multiplier(deck_num)
-                
-                # Get stored position info
-                if deck_num == 1:
-                    stored_position = self.audio_engine.deck1_play_position
-                    start_time = self.audio_engine.deck1_start_time
-                else:
-                    stored_position = self.audio_engine.deck2_play_position  
-                    start_time = self.audio_engine.deck2_start_time
-                    
-            except Exception as e:
-                position = 0.0
-                is_playing = False
-                tempo_multiplier = 1.0
-                stored_position = 0.0
-                start_time = 0.0
-            
-            # Background box
-            box_color = (30, 60, 30) if is_playing else (60, 30, 30)
-            cv2.rectangle(overlay, (viz_x, viz_y_start), 
-                         (viz_x + viz_width, viz_y_start + viz_height), box_color, -1)
-            cv2.rectangle(overlay, (viz_x, viz_y_start), 
-                         (viz_x + viz_width, viz_y_start + viz_height), (255, 255, 255), 2)
-            
-            # Deck title
-            title_color = (100, 255, 100) if is_playing else (255, 100, 100)
-            status_text = "PLAYING" if is_playing else "STOPPED"
-            cv2.putText(overlay, f"DECK {deck_num} - {status_text}", 
-                       (viz_x + 10, viz_y_start + 20), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, title_color, 2)
-            
-            # Track progress bar (main visualization)
-            bar_x = viz_x + 10
-            bar_y = viz_y_start + 35
-            bar_width = viz_width - 20
-            bar_height = 20
-            
-            # Background track bar
-            cv2.rectangle(overlay, (bar_x, bar_y), 
-                         (bar_x + bar_width, bar_y + bar_height), (50, 50, 50), -1)
-            cv2.rectangle(overlay, (bar_x, bar_y), 
-                         (bar_x + bar_width, bar_y + bar_height), (255, 255, 255), 1)
-            
-            # Progress fill
-            progress_width = int(bar_width * position)
-            if progress_width > 0:
-                progress_color = (0, 255, 0) if is_playing else (0, 150, 255)
-                cv2.rectangle(overlay, (bar_x, bar_y), 
-                             (bar_x + progress_width, bar_y + bar_height), progress_color, -1)
-            
-            # Position marker (current playhead)
-            marker_x = bar_x + progress_width
-            cv2.line(overlay, (marker_x, bar_y - 5), (marker_x, bar_y + bar_height + 5), 
-                     (255, 255, 255), 3)
-            
-            # Detailed position information
-            import time
-            current_time = time.time()
-            
-            # Position as percentage
-            pos_text = f"Position: {position*100:.1f}%"
-            cv2.putText(overlay, pos_text, (viz_x + 10, viz_y_start + 75), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-            
-            # Time information
-            estimated_track_length = 180.0  # 3 minutes
-            current_seconds = position * estimated_track_length
-            time_text = f"Time: {current_seconds:.1f}s / {estimated_track_length:.0f}s"
-            cv2.putText(overlay, time_text, (viz_x + 150, viz_y_start + 75), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-            
-            # Tempo information
-            tempo_text = f"Tempo: {tempo_multiplier:.2f}x ({(tempo_multiplier-1)*100:+.1f}%)"
-            cv2.putText(overlay, tempo_text, (viz_x + 10, viz_y_start + 95), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 255), 1)
-            
-            # Jog wheel interaction status
-            jog_wheel = self.jog_wheel_1 if deck_num == 1 else self.jog_wheel_2
-            if self.active_jog == deck_num and jog_wheel.is_touching:
-                jog_text = "JOG ACTIVE - CONTROLLING TIMELINE"
-                jog_color = (255, 255, 0)  # Yellow
-            else:
-                jog_text = "Jog wheel inactive"
-                jog_color = (150, 150, 150)  # Gray
-            cv2.putText(overlay, jog_text, (viz_x + 150, viz_y_start + 95), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, jog_color, 1)
-            
-            # Debug information (stored vs calculated position)
-            debug_text = f"Stored: {stored_position:.1f}s | Calc: {current_seconds:.1f}s"
-            cv2.putText(overlay, debug_text, (viz_x + 10, viz_y_start + 115), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.3, (200, 200, 200), 1)
-    
     def draw_controller_overlay(self, frame):
         """Draw the DJ controller overlay on the frame"""
         overlay = frame.copy()
@@ -2615,6 +2735,10 @@ class DJController:
         self._draw_professional_jog_wheel(overlay, self.jog_wheel_1, 1, "DECK 1")
         
         self._draw_professional_jog_wheel(overlay, self.jog_wheel_2, 2, "DECK 2")
+        
+        # --- Draw Waveforms (TOP LAYER) ---
+        # This is drawn before other controls so it's in the background
+        self.visualizer.draw_stacked_visualization(overlay, self.audio_engine)
         
         # Draw buttons
         for deck_buttons, deck_name in [(self.deck1_buttons, "Deck 1"), (self.deck2_buttons, "Deck 2")]:
@@ -2643,17 +2767,6 @@ class DJController:
             cv2.circle(overlay, (button.x + button.width//2, button.y + button.height//2), 20, color, -1)
             cv2.circle(overlay, (button.x + button.width//2, button.y + button.height//2), 20, (255, 255, 255), 2)
             cv2.putText(overlay, button.name, (button.x - 10, button.y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        
-        # Draw Rekordbox-style stacked track visualization
-        self.visualizer.draw_stacked_visualization(overlay, self.audio_engine)
-        
-        # Draw volume section - centered
-        vol_rect = (center_x - 85, center_y + 20, 170, 180)
-        cv2.rectangle(overlay, (vol_rect[0], vol_rect[1]), 
-                     (vol_rect[0] + vol_rect[2], vol_rect[1] + vol_rect[3]), (50, 50, 50), -1)
-        cv2.rectangle(overlay, (vol_rect[0], vol_rect[1]), 
-                     (vol_rect[0] + vol_rect[2], vol_rect[1] + vol_rect[3]), (255, 255, 255), 2)
-        cv2.putText(overlay, "Volume", (center_x - 25, center_y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
         # Volume faders with professional-style visualization
         for i, fader in enumerate([self.volume_fader_1, self.volume_fader_2]):
@@ -2969,17 +3082,22 @@ class DJController:
     def load_default_tracks(self):
         """Load default tracks into both decks with easy song selection"""
         
-        # ===== EASY SONG SELECTION - PASTE SONG NAMES HERE =====
-        # Set the song names you want to load (or leave as None for automatic)
-        # Copy exact folder names from your songs directory
+        levels = "[fadr.com] Stems - Avicii - Levels (Lyrics)"
+        no_broke_boys = "[fadr.com] Stems - Disco Lines & Tinashe - No Broke Boys (Official Audio)"
+        calabria = "[fadr.com] Stems - Calabria 2007 With LYRICS [IiX8yqDVWSU]"
+        sprinter = "[fadr.com] Stems - Central Cee x Dave - Sprinter (Lyrics)"
+        victory_lap = "[fadr.com] Stems - Fred again.. x Skepta x PlaqueBoyMax - Victory Lap (Lyrics)"
+        golden = "[fadr.com] Stems - Huntrix - Golden (Lyrics) KPop Demon Hunters [htk6MRjmcnQ]"
+        i_love_it = "[fadr.com] Stems - Icona Pop - I Love It (Feat. Charli XCX)  [Audio]"
+        die_young = "[fadr.com] Stems - Kesha - Die Young (Lyrics)"
+        no_hands = "[fadr.com] Stems - Waka Flocka Flame - No Hands (feat. Roscoe Dash and Wale)  Lyrics"
+        sushi_dont_lie = "[fadr.com] Stems - 揽佬 SKAI ISYOURGOD八方来财因果Official Music Video"
+        sexy_bitch = "[fadr.com] Stems - David Guetta - Sexy Bitch (feat. Akon)  Lyrics"
+        heads_will_roll = "[fadr.com] Stems - Heads Will Roll (A-Trak Remix Radio Edit)"
+        fukumean = "[fadr.com] Stems - Gunna - fukumean [Official Visualizer]"
         
-        DECK1_SONG = "[fadr.com] Stems - Kesha - Die Young (Lyrics)"  # <-- PASTE DECK 1 SONG NAME HERE
-        DECK2_SONG = "[fadr.com] Stems - Avicii - Levels (Lyrics)"  # <-- PASTE DECK 2 SONG NAME HERE
-        
-        # Example:
-        # DECK1_SONG = "Fred again.. - Jungle (SIDEPIECE Remix)"
-        # DECK2_SONG = "Another Song - Remix"
-        # ======================================================
+        DECK1_SONG = sexy_bitch  # <-- PASTE DECK 1 SONG NAME HERE
+        DECK2_SONG = heads_will_roll  # <-- PASTE DECK 2 SONG NAME HERE
         
         # Scan available tracks
         self.track_loader.scan_tracks()
