@@ -29,8 +29,8 @@ class HandDJ:
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=2,
-            min_detection_confidence=0.7,
-            min_tracking_confidence=0.5
+            min_detection_confidence=0.5,  # Reduced for faster detection
+            min_tracking_confidence=0.3   # Reduced for faster tracking
         )
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_drawing_styles = mp.solutions.drawing_styles
@@ -61,10 +61,10 @@ class HandDJ:
         # Global variable for PYO to control SfPlayer
         self.g_speed = SigTo(1.0, time=0.1)
         
-        # Smoothing parameters for gesture control
-        self.speed_history = [1.0] * 5
-        self.pitch_history = [0] * 5
-        self.volume_history = [5.0] * 5
+        # Minimal smoothing for ultra-low latency DJ response
+        self.speed_history = [1.0] * 2   # Reduced from 5 to 2 for instant response
+        self.pitch_history = [0] * 2     # Reduced from 5 to 2 for instant response
+        self.volume_history = [5.0] * 2  # Reduced from 5 to 2 for instant response
         
         # Video capture setup
         self.cap = cv2.VideoCapture(0)
@@ -83,11 +83,11 @@ class HandDJ:
         
         # For waveform visualization
         self.waveform_buffer = []
-        self.waveform_buffer_size = 100
+        self.waveform_buffer_size = 50   # Reduced from 100 for lower latency
         self.waveform_amplitude = 0.0
         self.waveform_frequency = 0.0
         self.waveform_update_time = time.time()
-        self.waveform_update_interval = 0.05  # 20 updates per second
+        self.waveform_update_interval = 0.02  # Increased to 50 updates per second for smoother response
         
         # For frame counting (debug and timing)
         self.frame_count = 0
@@ -98,8 +98,8 @@ class HandDJ:
             'right': {'angles': [], 'timestamps': [], 'triggered': False}
         }
         self.twist_threshold = 15  # Degrees from horizontal
-        self.twist_cooldown = 1.0  # Seconds between twist actions
-        self.twist_memory = 5  # Frames to track for gesture detection
+        self.twist_cooldown = 0.3  # Reduced from 1.0s for faster response
+        self.twist_memory = 3     # Reduced from 5 for faster gesture detection
         
         # For playlist functionality
         self.playlist = []
@@ -691,7 +691,7 @@ class HandDJ:
         # Process left hand for speed control (thumb-index pinch)
         if left_hand_landmarks:
             # Get screen coordinates for gesture detection
-            h, w, c = self.image_shape if hasattr(self, 'image_shape') else (720, 1280, 3)
+            h, w, c = self.image_shape if hasattr(self, 'image_shape') else (1080, 1920, 3)
             
             left_thumb_tip = left_hand_landmarks.landmark[4]
             left_index_tip = left_hand_landmarks.landmark[8]
@@ -743,7 +743,7 @@ class HandDJ:
         # Process right hand for pitch/frequency control
         if right_hand_landmarks:
             # Get screen coordinates for gesture detection
-            h, w, c = self.image_shape if hasattr(self, 'image_shape') else (720, 1280, 3)
+            h, w, c = self.image_shape if hasattr(self, 'image_shape') else (1080, 1920, 3)
             
             right_thumb_tip = right_hand_landmarks.landmark[4]
             right_index_tip = right_hand_landmarks.landmark[8]
@@ -1455,7 +1455,7 @@ class HandDJ:
                 cv2.imshow('Hand DJ', image)
                 
                 # Check for key presses
-                key = cv2.waitKey(5) & 0xFF
+                key = cv2.waitKey(1) & 0xFF  # Reduced from 5ms to 1ms for ultra-low latency
                 if key == ord('q'):
                     break
                 elif key == ord('r'):

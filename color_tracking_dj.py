@@ -37,10 +37,10 @@ class SimpleHandDJ:
         self.server = None  # Will be initialized in setup_audio_server
         self.audio_path = audio_file
         
-        # Smoothing parameters for gesture control
-        self.speed_history = [1.0] * 5
-        self.pitch_history = [0] * 5
-        self.volume_history = [0.5] * 5
+        # Minimal smoothing for ultra-low latency DJ response
+        self.speed_history = [1.0] * 2   # Reduced from 5 to 2 for instant response
+        self.pitch_history = [0] * 2     # Reduced from 5 to 2 for instant response
+        self.volume_history = [0.5] * 2  # Reduced from 5 to 2 for instant response
         
         # Video capture setup
         self.cap = cv2.VideoCapture(0)
@@ -468,7 +468,7 @@ class SimpleHandDJ:
                 cv2.imshow('Simple Hand DJ', frame)
                 
                 # Check key presses
-                key = cv2.waitKey(5) & 0xFF
+                key = cv2.waitKey(1) & 0xFF  # Reduced from 5ms to 1ms for ultra-low latency
                 if key == ord('q'):
                     break
                 elif key == ord('m'):

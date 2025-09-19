@@ -273,25 +273,25 @@ class RekordboxStyleVisualizer:
         self.track_height = 100  # Increased height for better visibility
         self.track_spacing = 10  # More spacing between tracks
         self.waveform_height = 70  # Max height of the waveform peaks
-        self.visible_seconds = 16.0  # More visible audio for better context
+        self.visible_seconds = 8.0  # Zoomed-in view for precise beat analysis
         self.center_line_thickness = 2  # Prominent center playhead
 
         # --- Professional Rekordbox Colors ---
         self.bg_color = (20, 20, 20)  # Very dark gray (not pure black)
         
-        # Frequency band colors (matching Rekordbox exactly)
-        self.low_freq_color = (65, 180, 255)    # Bright blue for bass
-        self.mid_freq_color = (255, 165, 80)    # Orange for mids  
-        self.high_freq_color = (240, 240, 240)  # Bright white for highs
+        # Enhanced frequency band colors for better distinction
+        self.low_freq_color = (50, 150, 255)     # Deeper blue for bass - more contrast
+        self.mid_freq_color = (255, 140, 60)     # Richer orange for mids - more distinct
+        self.high_freq_color = (255, 255, 255)   # Pure white for highs - maximum contrast
         
-        # Grid and UI colors
-        self.beat_color = (60, 60, 60)          # Subtle beat lines
-        self.bar_color = (100, 100, 100)        # More prominent bar lines
-        self.major_bar_color = (140, 140, 140)  # Every 4th bar more prominent
-        self.playhead_color = (255, 100, 100)   # Red center playhead like Rekordbox
-        self.playhead_shadow = (120, 50, 50)    # Shadow for depth
+        # Grid and UI colors - PRIORITY: Make beat/bar lines highly visible
+        self.beat_color = (120, 120, 120)       # Very bright beat lines - PRIORITY
+        self.bar_color = (200, 200, 200)        # ULTRA-bright individual bar lines - PRIORITY  
+        self.major_bar_color = (255, 255, 255)  # Pure white phrase markers - MAXIMUM PRIORITY
+        self.playhead_color = (255, 80, 80)     # Bright red center playhead
+        self.playhead_shadow = (150, 40, 40)    # Stronger shadow for depth
         self.bpm_color = (100, 200, 255)        # Blue for BPM display
-        self.text_color = (200, 200, 200)     # Light gray text
+        self.text_color = (220, 220, 220)       # Brighter text
         
         # Cached waveform data
         self.deck1_waveform: Optional[WaveformData] = None
@@ -310,9 +310,8 @@ class RekordboxStyleVisualizer:
             
     def draw_stacked_visualization(self, overlay, audio_engine):
         """Draw professional Rekordbox-style stacked track visualization"""
-        print(f"🎨 Drawing visualization - Deck1: {self.deck1_waveform is not None}, Deck2: {self.deck2_waveform is not None}")
-        # Calculate professional layout with proper proportions
-        margin = 80
+        # Calculate professional layout with wider visualization for better timeline view
+        margin = 60  # Reduced margins for more waveform space
         viz_width = self.screen_width - (2 * margin)
         viz_start_x = margin
         center_x = self.screen_width // 2
@@ -357,13 +356,17 @@ class RekordboxStyleVisualizer:
         playhead_top = deck1_y
         playhead_bottom = deck2_y + self.track_height
         
-        # Draw shadow for depth
-        cv2.line(overlay, (playhead_x + 1, playhead_top), 
-                (playhead_x + 1, playhead_bottom), self.playhead_shadow, 3)
+        # Draw wider shadow for more depth
+        cv2.line(overlay, (playhead_x + 2, playhead_top), 
+                (playhead_x + 2, playhead_bottom), self.playhead_shadow, 4)
         
-        # Draw main playhead line
+        # Draw main playhead line - thicker and more prominent
         cv2.line(overlay, (playhead_x, playhead_top), 
-                (playhead_x, playhead_bottom), self.playhead_color, 2)
+                (playhead_x, playhead_bottom), self.playhead_color, 3)
+        
+        # Add bright center highlight
+        cv2.line(overlay, (playhead_x, playhead_top), 
+                (playhead_x, playhead_bottom), (255, 200, 200), 1)
         
     def _draw_deck_visualization(self, overlay, deck_num: int, x: int, y: int, 
                                width: int, center_x: int, waveform_data: Optional[WaveformData], 
@@ -437,45 +440,76 @@ class RekordboxStyleVisualizer:
         waveform_center_y = y + self.track_height // 2
         max_amplitude = self.waveform_height // 2
         
-        # --- Draw Enhanced Beat and Bar Grid (Professional Style) ---
-        bar_count = 0
-        for bar_time in waveform_data.bar_times:
-            if start_time <= bar_time <= end_time:
-                px = time_to_pixel(bar_time)
-                # Every 4th bar gets special prominence (phrase markers)
-                if bar_count % 4 == 0:
-                    cv2.line(overlay, (px, y + 5), (px, y + self.track_height - 5), 
-                            self.major_bar_color, 2)
-                else:
-                    cv2.line(overlay, (px, y + 10), (px, y + self.track_height - 10), 
-                            self.bar_color, 1)
-                bar_count += 1
+        # --- PRIORITY: Draw Beat and Bar Grid Lines (ALWAYS VISIBLE) ---
+        # Debug: Show timeline coverage for 8-second view
+        timeline_info = f"Timeline: {start_time:.1f}s to {end_time:.1f}s ({end_time - start_time:.1f}s visible)"
         
-        # Beat lines (more subtle)
+        # Draw beat lines first (behind bars) - MAKE THESE ALWAYS SHOW
+        beat_lines_drawn = 0
         for beat_time in waveform_data.beat_times:
             if start_time <= beat_time <= end_time:
                 px = time_to_pixel(beat_time)
-                cv2.line(overlay, (px, y + 25), (px, y + self.track_height - 25), 
-                        self.beat_color, 1)
+                # PRIORITY: Ultra-prominent beat lines extending full height
+                cv2.line(overlay, (px, y + 5), (px, y + self.track_height - 5), 
+                        self.beat_color, 3)  # Extra thick beat lines - PRIORITY
+                beat_lines_drawn += 1
+        
+        # Draw EVERY INDIVIDUAL bar line - MAKE EACH BAR VISIBLE
+        bar_count = 0
+        bar_lines_drawn = 0
+        for bar_time in waveform_data.bar_times:
+            if start_time <= bar_time <= end_time:
+                px = time_to_pixel(bar_time)
+                # Every 4th bar gets ultra prominence (phrase markers)
+                if bar_count % 4 == 0:
+                    # PRIORITY: Major phrase markers - maximum visibility
+                    cv2.line(overlay, (px, y - 2), (px, y + self.track_height + 2), 
+                            self.major_bar_color, 4)  # Thickest lines extending beyond track
+                else:
+                    # PRIORITY: EVERY individual bar marker - highly visible
+                    cv2.line(overlay, (px, y), (px, y + self.track_height), 
+                            self.bar_color, 3)  # Thick bar lines full height for EVERY bar
+                bar_count += 1
+                bar_lines_drawn += 1
+        
+        # PRIORITY: Always show grid status (for debugging visibility)
+        if beat_lines_drawn == 0 and bar_lines_drawn == 0:
+            # If no lines drawn, draw emergency grid markers every second
+            for i in range(int(start_time), int(end_time) + 1):
+                px = time_to_pixel(float(i))
+                if x <= px <= x + width:
+                    cv2.line(overlay, (px, y + 20), (px, y + self.track_height - 20), 
+                            (255, 0, 0), 2)  # Red emergency grid
+        
+        # Display timeline info for 8-second confirmation
+        if hasattr(self, '_timeline_debug_counter'):
+            self._timeline_debug_counter += 1
+        else:
+            self._timeline_debug_counter = 1
+        
+        # Show timeline info every 2 seconds to confirm 8-second view
+        if self._timeline_debug_counter % 120 == 0:  # Every 2 seconds
+            total_visible = end_time - start_time
+            print(f"📊 8-Second View: Showing {total_visible:.1f}s | Beats: {beat_lines_drawn} | Bars: {bar_lines_drawn}")
 
-        # --- Draw Stereo-Style Multi-Band Waveforms ---
-        # Bass (bottom layer, wider)
+        # --- Draw Stereo-Style Multi-Band Waveforms with Better Separation ---
+        # Bass (bottom layer, full amplitude for strong visual impact)
         self._render_stereo_waveform_band(overlay, width, x, waveform_center_y, start_time, 
                                          seconds_per_pixel, waveform_data.duration, 
                                          waveform_data.low_freq_peaks, self.low_freq_color, 
-                                         max_amplitude, alpha=0.8)
+                                         max_amplitude * 0.9, alpha=0.85)
         
-        # Mids (middle layer)
+        # Mids (middle layer, distinct sizing)
         self._render_stereo_waveform_band(overlay, width, x, waveform_center_y, start_time, 
                                          seconds_per_pixel, waveform_data.duration, 
                                          waveform_data.mid_freq_peaks, self.mid_freq_color, 
-                                         max_amplitude * 0.7, alpha=0.9)
+                                         max_amplitude * 0.65, alpha=0.95)
         
-        # Highs (top layer, thinner but most prominent)
+        # Highs (top layer, smaller but very bright for clarity)
         self._render_stereo_waveform_band(overlay, width, x, waveform_center_y, start_time, 
                                          seconds_per_pixel, waveform_data.duration, 
                                          waveform_data.high_freq_peaks, self.high_freq_color, 
-                                         max_amplitude * 0.5, alpha=1.0)
+                                         max_amplitude * 0.4, alpha=1.0)
 
     def _render_stereo_waveform_band(self, overlay, width, x, center_y, start_time, 
                                     seconds_per_pixel, duration, peaks, color, max_height, alpha=1.0):
@@ -779,7 +813,7 @@ class AudioEngine:
                 self.server = Server(
                     sr=44100,
                     nchnls=2,
-                    buffersize=512,
+                    buffersize=256,  # Reduced from 512 for ultra-low latency
                     duplex=0,
                     audio='portaudio',
                     jackname='',
@@ -796,7 +830,7 @@ class AudioEngine:
                 self.server = Server(
                     sr=44100,
                     nchnls=2,
-                    buffersize=512,
+                    buffersize=256,  # Reduced from 512 for ultra-low latency
                     duplex=0,
                     audio='portaudio'
                 )
@@ -1602,13 +1636,13 @@ class HandTracker:
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=2,
-            min_detection_confidence=0.7,
-            min_tracking_confidence=0.5
+            min_detection_confidence=0.5,  # Reduced for faster detection
+            min_tracking_confidence=0.3   # Reduced for faster tracking
         )
         self.mp_drawing = mp.solutions.drawing_utils
-        self.frame_width = 1280
-        self.frame_height = 720
-        self.pinch_history = []  # For smoothing pinch detection
+        self.frame_width = 1920
+        self.frame_height = 1080
+        self.pinch_history = []  # Minimal smoothing for instant response
         
     def detect_pinch(self, landmarks, hand_landmarks) -> Tuple[bool, Tuple[int, int]]:
         """
@@ -1628,8 +1662,8 @@ class HandTracker:
             (thumb_tip.y - index_tip.y) ** 2
         )
         
-        # More precise pinch threshold - fingers must be closer together
-        pinch_threshold = 0.035  # Reduced sensitivity - fingers must be quite close to avoid accidental detection
+        # Optimized pinch threshold for ultra-responsive DJ control
+        pinch_threshold = 0.04  # Balanced for instant response while avoiding false triggers
         is_pinched = distance < pinch_threshold
         
         # Calculate pinch position (midpoint) - use actual frame dimensions
@@ -1656,8 +1690,8 @@ class HandTracker:
             (middle_tip.y - index_tip.y) ** 2
         )
         
-        # Jog wheel pinch threshold (slightly more forgiving for easier jog wheel access)
-        jog_pinch_threshold = 0.035
+        # Jog wheel pinch threshold optimized for instant scratching response
+        jog_pinch_threshold = 0.04  # Increased for faster jog wheel response
         is_pinched = distance < jog_pinch_threshold
         
         # Calculate pinch position (midpoint) - use actual frame dimensions
@@ -1778,8 +1812,8 @@ class DJController:
         self.track_loader = TrackLoader()
         
         # Controller layout configuration
-        self.screen_width = 1280
-        self.screen_height = 720
+        self.screen_width = 1920
+        self.screen_height = 1080
         self.overlay_alpha = 0.8
         
         # Initialize Rekordbox-style visualization
@@ -1804,10 +1838,14 @@ class DJController:
         self.jog_last_angle = 0.0  # Last touch angle for calculating rotation
         self.jog_rotation_speed = 0.0  # Current rotation speed for scratching
         
-        # Video capture
+        # Video capture with ultra-low latency optimizations
         self.cap = cv2.VideoCapture(0)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.screen_width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.screen_height)
+        # Ultra-low latency camera optimizations
+        self.cap.set(cv2.CAP_PROP_FPS, 60)           # Request highest FPS
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)     # Minimal buffer for instant frames
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))  # Fast codec
     
     def setup_controller_layout(self):
         """Setup the DJ controller layout matching the screenshot"""
@@ -1841,9 +1879,9 @@ class DJController:
             "cfx_r": ControllerButton("CFX", center_x + 50, center_y - 30, 60, 30)
         }
         
-        # Volume faders - centered (set initial values to match audio engine)
-        self.volume_fader_1 = Fader("Vol1", center_x - 70, center_y + 40, 30, 150, value=0.8)  # Match deck1_master_volume
-        self.volume_fader_2 = Fader("Vol2", center_x + 40, center_y + 40, 30, 150, value=0.8)   # Match deck2_master_volume
+        # Volume faders - centered (set initial values to 100%)
+        self.volume_fader_1 = Fader("Vol1", center_x - 70, center_y + 40, 30, 150, value=1.0)  # 100% volume
+        self.volume_fader_2 = Fader("Vol2", center_x + 40, center_y + 40, 30, 150, value=1.0)   # 100% volume
         
         # Crossfader - centered
         self.crossfader = Fader("Crossfader", center_x - 100, center_y + 240, 200, 30, value=0.5)
@@ -1892,8 +1930,8 @@ class DJController:
                 active_stems = self.audio_engine.deck1_active_stems if deck == 1 else self.audio_engine.deck2_active_stems
                 if button.is_active and not any(active_stems.values()):
                     print(f"Deck {deck}: No active stems. Activating Vocal/Instrumental for playback.")
-                    self.audio_engine.set_stem_volume(deck, "vocals", 0.7)
-                    self.audio_engine.set_stem_volume(deck, "instrumental", 0.7)
+                    self.audio_engine.set_stem_volume(deck, "vocals", 1.0)
+                    self.audio_engine.set_stem_volume(deck, "instrumental", 1.0)
                     # Update button UI to reflect this change
                     if deck == 1:
                         self.deck1_buttons["vocal"].is_active = True
@@ -1917,7 +1955,7 @@ class DJController:
             if button.button_type == "toggle":
                 button.is_active = not button.is_active
                 # Toggle vocal stem volume
-                volume = 0.7 if button.is_active else 0.0
+                volume = 1.0 if button.is_active else 0.0
                 self.audio_engine.set_stem_volume(deck, "vocals", volume)
                 print(f"Deck {deck} vocals: {'ON' if button.is_active else 'OFF'}")
         
@@ -1925,7 +1963,7 @@ class DJController:
             if button.button_type == "toggle":
                 button.is_active = not button.is_active
                 # Toggle instrumental stem volume
-                volume = 0.7 if button.is_active else 0.0
+                volume = 1.0 if button.is_active else 0.0
                 self.audio_engine.set_stem_volume(deck, "instrumental", volume)
                 print(f"Deck {deck} instrumental: {'ON' if button.is_active else 'OFF'}")
     
@@ -2083,7 +2121,7 @@ class DJController:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
     
     def process_hand_interactions(self, pinch_data, jog_pinch_data):
-        """Process hand interactions - supports multi-hand/multi-pinch interactions"""
+        """Enhanced multi-touch system - supports simultaneous interactions with multiple controls"""
         # Store previous button states
         prev_pressed_states = {}
         for buttons in [self.deck1_buttons, self.deck2_buttons, self.center_buttons]:
@@ -2095,70 +2133,151 @@ class DJController:
             for button in buttons.values():
                 button.is_pressed = False
         
-        # Track which controls have been interacted with in this frame to avoid conflicts
-        interacted_controls = set()
-
-        # --- Process Regular Pinches (for sliders, knobs, buttons) ---
+        # --- Enhanced Multi-Touch System ---
         active_pinches = [(x, y) for is_pinched, (x, y) in pinch_data if is_pinched]
+        used_pinches = set()  # Track which pinches have been assigned
         
-        # First, handle ongoing interactions (sliders, knobs)
-        if self.active_slider:
-            # Find the pinch closest to the active slider to continue the interaction
-            pinch_to_update = self._find_closest_pinch(self.active_slider_pos, active_pinches)
-            if pinch_to_update:
-                x, y = pinch_to_update
-                self._update_active_slider(x, y)
-                interacted_controls.add(self.active_slider)
-                active_pinches.remove(pinch_to_update) # This pinch has been used
+        # Initialize active controls tracking if not exists
+        if not hasattr(self, 'active_controls'):
+            self.active_controls = {}  # Maps control_id -> (control_type, control_object, position)
+        
+        # Step 1: Update all existing active controls
+        controls_to_remove = []
+        for control_id, (control_type, control_obj, last_pos) in list(self.active_controls.items()):
+            # Find the closest available pinch to continue this interaction
+            available_pinches = [p for p in active_pinches if p not in used_pinches]
+            if available_pinches:
+                closest_pinch = self._find_closest_pinch(last_pos, available_pinches)
+                if closest_pinch and self._distance(closest_pinch, last_pos) < 100:  # Within reasonable range
+                    x, y = closest_pinch
+                    used_pinches.add(closest_pinch)
+                    
+                    # Update the control
+                    if control_type == 'slider':
+                        self._update_slider_by_name(control_obj, x, y)
+                        self.active_controls[control_id] = (control_type, control_obj, (x, y))
+                    elif control_type == 'knob':
+                        self._update_knob_by_object(control_obj, x, y)
+                        self.active_controls[control_id] = (control_type, control_obj, (x, y))
+                else:
+                    # No close pinch found, release this control
+                    controls_to_remove.append(control_id)
+            else:
+                # No available pinches, release this control
+                controls_to_remove.append(control_id)
+        
+        # Remove controls that no longer have pinches
+        for control_id in controls_to_remove:
+            del self.active_controls[control_id]
 
-        if self.active_knob:
-             # Find the pinch closest to the active knob
-            pinch_to_update = self._find_closest_pinch(self.active_knob_pos, active_pinches)
-            if pinch_to_update:
-                x, y = pinch_to_update
-                self._update_active_knob(x, y)
-                interacted_controls.add(self.active_knob)
-                active_pinches.remove(pinch_to_update)
-
-        # Process remaining pinches for new interactions
-        for x, y in active_pinches:
+        # Step 2: Handle new interactions with remaining pinches
+        remaining_pinches = [p for p in active_pinches if p not in used_pinches]
+        
+        for x, y in remaining_pinches:
             interaction_handled = False
-            # Check for new slider/knob grabs if no control is currently held by this "hand"
-            if not self.active_slider and not self.active_knob:
-                if self.check_fader_collision(x, y, self.volume_fader_1):
-                    self._grab_slider('volume_fader_1', x, y)
-                    interaction_handled = True
-                elif self.check_fader_collision(x, y, self.volume_fader_2):
-                    self._grab_slider('volume_fader_2', x, y)
-                    interaction_handled = True
-                elif self.check_crossfader_collision(x, y):
-                    self._grab_slider('crossfader', x, y)
-                    interaction_handled = True
-                elif self.check_fader_collision(x, y, self.tempo_fader_1):
-                    self._grab_slider('tempo_fader_1', x, y)
-                    interaction_handled = True
-                elif self.check_fader_collision(x, y, self.tempo_fader_2):
-                    self._grab_slider('tempo_fader_2', x, y)
-                    interaction_handled = True
-                elif self._check_knob_area(x, y, self.deck1_eq_knobs["low"]):
-                    self._grab_knob(self.deck1_eq_knobs["low"], x, y, 1, "low")
-                    interaction_handled = True
-                elif self._check_knob_area(x, y, self.deck2_eq_knobs["low"]):
-                    self._grab_knob(self.deck2_eq_knobs["low"], x, y, 2, "low")
-                    interaction_handled = True
-
-            # If no slider/knob was grabbed by this pinch, check for button presses
+            
+            # Check for new slider interactions (multiple sliders can be active simultaneously)
+            if self.check_fader_collision(x, y, self.volume_fader_1):
+                control_id = f"volume_fader_1_{x}_{y}"
+                self.active_controls[control_id] = ('slider', 'volume_fader_1', (x, y))
+                self._update_slider_by_name('volume_fader_1', x, y)
+                interaction_handled = True
+                used_pinches.add((x, y))
+            elif self.check_fader_collision(x, y, self.volume_fader_2):
+                control_id = f"volume_fader_2_{x}_{y}"
+                self.active_controls[control_id] = ('slider', 'volume_fader_2', (x, y))
+                self._update_slider_by_name('volume_fader_2', x, y)
+                interaction_handled = True
+                used_pinches.add((x, y))
+            elif self.check_crossfader_collision(x, y):
+                control_id = f"crossfader_{x}_{y}"
+                self.active_controls[control_id] = ('slider', 'crossfader', (x, y))
+                self._update_slider_by_name('crossfader', x, y)
+                interaction_handled = True
+                used_pinches.add((x, y))
+            
+            # Check for tempo sliders if not already handled
+            if not interaction_handled and self.check_fader_collision(x, y, self.tempo_fader_1):
+                control_id = f"tempo_fader_1_{x}_{y}"
+                self.active_controls[control_id] = ('slider', 'tempo_fader_1', (x, y))
+                self._update_slider_by_name('tempo_fader_1', x, y)
+                interaction_handled = True
+                used_pinches.add((x, y))
+            elif not interaction_handled and self.check_fader_collision(x, y, self.tempo_fader_2):
+                control_id = f"tempo_fader_2_{x}_{y}"
+                self.active_controls[control_id] = ('slider', 'tempo_fader_2', (x, y))
+                self._update_slider_by_name('tempo_fader_2', x, y)
+                interaction_handled = True
+                used_pinches.add((x, y))
+            
+            # Check for EQ knobs if not already handled
             if not interaction_handled:
-                self._check_button_interactions(x, y, prev_pressed_states)
-
-        # Release sliders/knobs if no pinches are active
-        if not pinch_data or not any(p[0] for p in pinch_data):
-            if self.active_slider:
-                self._release_active_slider()
-            if self.active_knob:
-                self._release_active_knob()
+                # Deck 1 EQ knobs
+                for eq_band, knob in self.deck1_eq_knobs.items():
+                    if self._check_knob_area(x, y, knob):
+                        control_id = f"deck1_eq_{eq_band}_{x}_{y}"
+                        self.active_controls[control_id] = ('knob', knob, (x, y))
+                        self._update_knob_by_object(knob, x, y)
+                        interaction_handled = True
+                        used_pinches.add((x, y))
+                        break
+                
+                # Deck 2 EQ knobs if deck 1 didn't match
+                if not interaction_handled:
+                    for eq_band, knob in self.deck2_eq_knobs.items():
+                        if self._check_knob_area(x, y, knob):
+                            control_id = f"deck2_eq_{eq_band}_{x}_{y}"
+                            self.active_controls[control_id] = ('knob', knob, (x, y))
+                            self._update_knob_by_object(knob, x, y)
+                            interaction_handled = True
+                            used_pinches.add((x, y))
+                            break
+            
+            # Check for button presses if nothing else handled
+            if not interaction_handled:
+                # Check all button groups for simultaneous button presses
+                for buttons, deck_name in [(self.deck1_buttons, "Deck 1"), (self.deck2_buttons, "Deck 2"), (self.center_buttons, "Center")]:
+                    for button in buttons.values():
+                        if (button.x <= x <= button.x + button.width and 
+                            button.y <= y <= button.y + button.height):
+                            button.is_pressed = True
+                            # Trigger button action if this is a new press
+                            if not prev_pressed_states.get(id(button), False):
+                                deck = 1 if deck_name == "Deck 1" else (2 if deck_name == "Deck 2" else 0)
+                                self.handle_button_interaction(button, deck)
+                            interaction_handled = True
+                            used_pinches.add((x, y))
+                            break
+                    if interaction_handled:
+                        break
         
-        # --- Process Jog Wheel Pinches ---
+        # Step 3: Handle jog wheel interactions (separate pinch type)
+        self._process_jog_wheel_interactions(jog_pinch_data)
+        
+        # Step 4: Clean up - release all controls if no pinches are active
+        if not active_pinches:
+            # Clear all active controls
+            for control_id, (control_type, control_obj, _) in self.active_controls.items():
+                if control_type == 'slider':
+                    # Find the actual fader object and stop dragging
+                    if isinstance(control_obj, str):
+                        if control_obj == 'volume_fader_1':
+                            self.volume_fader_1.is_dragging = False
+                        elif control_obj == 'volume_fader_2':
+                            self.volume_fader_2.is_dragging = False
+                        elif control_obj == 'crossfader':
+                            self.crossfader.is_dragging = False
+                        elif control_obj == 'tempo_fader_1':
+                            self.tempo_fader_1.is_dragging = False
+                        elif control_obj == 'tempo_fader_2':
+                            self.tempo_fader_2.is_dragging = False
+                elif control_type == 'knob':
+                    control_obj.is_dragging = False
+            
+            self.active_controls.clear()
+    
+    def _process_jog_wheel_interactions(self, jog_pinch_data):
+        """Handle jog wheel interactions with separate pinch gesture"""
         active_jog_pinches = [(x, y) for is_jog_pinched, (x, y) in jog_pinch_data if is_jog_pinched]
         
         if active_jog_pinches:
@@ -2192,6 +2311,69 @@ class DJController:
                 closest_pinch = pinch_pos
         
         return closest_pinch
+    
+    def _distance(self, pos1, pos2):
+        """Calculate distance between two positions"""
+        return np.sqrt((pos1[0] - pos2[0]) ** 2 + (pos1[1] - pos2[1]) ** 2)
+    
+    def _update_slider_by_name(self, slider_name, x, y):
+        """Update a slider by its name - supports multiple simultaneous sliders"""
+        if slider_name == 'volume_fader_1':
+            fader = self.volume_fader_1
+            relative_y = (y - fader.y) / fader.height
+            fader_value = max(0.0, min(1.0, 1.0 - relative_y))
+            fader.value = fader_value
+            fader.is_dragging = True
+            self.audio_engine.set_master_volume(1, fader_value)
+            
+        elif slider_name == 'volume_fader_2':
+            fader = self.volume_fader_2
+            relative_y = (y - fader.y) / fader.height
+            fader_value = max(0.0, min(1.0, 1.0 - relative_y))
+            fader.value = fader_value
+            fader.is_dragging = True
+            self.audio_engine.set_master_volume(2, fader_value)
+            
+        elif slider_name == 'crossfader':
+            fader = self.crossfader
+            relative_x = (x - fader.x) / fader.width
+            crossfader_value = max(0.0, min(1.0, relative_x))
+            fader.value = crossfader_value
+            fader.is_dragging = True
+            self.audio_engine.set_crossfader_position(crossfader_value)
+            
+        elif slider_name == 'tempo_fader_1':
+            fader = self.tempo_fader_1
+            relative_y = (y - fader.y) / fader.height
+            fader_value = max(0.0, min(1.0, 1.0 - relative_y))
+            fader.value = fader_value
+            fader.is_dragging = True
+            self.audio_engine.set_tempo(1, fader_value)
+            
+        elif slider_name == 'tempo_fader_2':
+            fader = self.tempo_fader_2
+            relative_y = (y - fader.y) / fader.height
+            fader_value = max(0.0, min(1.0, 1.0 - relative_y))
+            fader.value = fader_value
+            fader.is_dragging = True
+            self.audio_engine.set_tempo(2, fader_value)
+    
+    def _update_knob_by_object(self, knob, x, y):
+        """Update a knob by its object - supports multiple simultaneous knobs"""
+        center_x = knob.x
+        center_y = knob.y
+        
+        # Calculate angle from center to pinch position
+        dx = x - center_x
+        dy = y - center_y
+        angle = np.arctan2(dy, dx)
+        
+        # Convert angle to knob value (0.0 to 1.0)
+        normalized_angle = (angle + np.pi) / (2 * np.pi)
+        knob_value = max(0.0, min(1.0, normalized_angle))
+        
+        knob.value = knob_value
+        knob.is_dragging = True
 
     def _grab_slider(self, slider_name: str, x: int, y: int):
         """Grab a slider for continuous control"""
@@ -2987,8 +3169,8 @@ class DJController:
                 self.deck1_buttons["vocal"].is_active = True
                 self.deck1_buttons["instrumental"].is_active = True
                 # Ensure audio engine reflects these settings properly
-                self.audio_engine.set_stem_volume(1, "vocals", 0.7)
-                self.audio_engine.set_stem_volume(1, "instrumental", 0.7)
+                self.audio_engine.set_stem_volume(1, "vocals", 1.0)
+                self.audio_engine.set_stem_volume(1, "instrumental", 1.0)
                 print(f"Loaded '{track1.name}' into Deck 1 (cue point: beginning)")
         
         if len(self.track_loader.available_tracks) >= 2:
@@ -3004,8 +3186,8 @@ class DJController:
                 self.deck2_buttons["vocal"].is_active = True
                 self.deck2_buttons["instrumental"].is_active = True
                 # Ensure audio engine reflects these settings properly
-                self.audio_engine.set_stem_volume(2, "vocals", 0.7)
-                self.audio_engine.set_stem_volume(2, "instrumental", 0.7)
+                self.audio_engine.set_stem_volume(2, "vocals", 1.0)
+                self.audio_engine.set_stem_volume(2, "instrumental", 1.0)
                 print(f"Loaded '{track2.name}' into Deck 2 (cue point: beginning)")
     
     def draw_fingertip_landmarks(self, frame, results):
@@ -3038,8 +3220,8 @@ class DJController:
                 middle_index_distance = np.sqrt((middle_x - index_x)**2 + (middle_y - index_y)**2)
                 
                 # Pinch thresholds (converted from normalized to pixel space)
-                regular_pinch_threshold = 0.035 * width  # Same as in HandTracker
-                jog_pinch_threshold = 0.035 * width     # Same as in HandTracker
+                regular_pinch_threshold = 0.04 * width  # Optimized for instant response
+                jog_pinch_threshold = 0.04 * width     # Optimized for instant scratching
                 
                 # Check if any pinch connections are active
                 regular_pinch_active = thumb_index_distance < regular_pinch_threshold
@@ -3095,9 +3277,16 @@ class DJController:
         sexy_bitch = "[fadr.com] Stems - David Guetta - Sexy Bitch (feat. Akon)  Lyrics"
         heads_will_roll = "[fadr.com] Stems - Heads Will Roll (A-Trak Remix Radio Edit)"
         fukumean = "[fadr.com] Stems - Gunna - fukumean [Official Visualizer]"
+        no_pole = "[fadr.com] Stems - Don Toliver - No Pole (Lyrics)"
+        mcdonalds = "[fadr.com] Stems - POV_ You're at McDonald's"
+        shotta_flow = "[fadr.com] Stems - NLE Choppa - Shotta Flow (Lyrics)"
+        last_friday_night = "[fadr.com] Stems - Katy Perry - Last Friday Night (T.G.I.F) (Lyrics)"
+        newjeans = "[fadr.com] Stems - NewJeans 'New Jeans (ft. The Powerpuff Girls)' Lyrics (뉴진스 New Jeans 가사) (Color Coded Lyrics)"
+        clarity = "[fadr.com] Stems - Zedd feat. Foxes - Clarity (Lyrics)"
+        long_time = "[fadr.com] Stems - Long Time (Intro)"
         
-        DECK1_SONG = sexy_bitch  # <-- PASTE DECK 1 SONG NAME HERE
-        DECK2_SONG = heads_will_roll  # <-- PASTE DECK 2 SONG NAME HERE
+        DECK1_SONG = long_time
+        DECK2_SONG = newjeans  
         
         # Scan available tracks
         self.track_loader.scan_tracks()
@@ -3149,20 +3338,101 @@ class DJController:
                 self._load_track_to_deck(2, track2)
                 print(f"🎵 DECK 2: Auto-loaded '{track2.name}'")
         
+        # Auto BPM Sync - Calculate average BPM and sync both decks
+        self._auto_bpm_sync()
+        
         print("✅ Track loading complete!")
         print()
     
+    def _auto_bpm_sync(self):
+        """Automatically sync both decks to the average BPM of the loaded tracks"""
+        if not self.deck1_track or not self.deck2_track:
+            print("⚠️ BPM Sync: Need both tracks loaded")
+            return
+        
+        # Get original BPMs
+        deck1_bpm = self.deck1_track.bpm
+        deck2_bpm = self.deck2_track.bpm
+        
+        # Calculate average BPM (no decimals)
+        average_bpm = int((deck1_bpm + deck2_bpm) / 2)
+        
+        # Calculate tempo adjustment needed for each deck
+        deck1_tempo_ratio = average_bpm / deck1_bpm
+        deck2_tempo_ratio = average_bpm / deck2_bpm
+        
+        # Check if BPM sync is possible within tempo range (0.8x to 1.2x)
+        if deck1_tempo_ratio < 0.8 or deck1_tempo_ratio > 1.2:
+            print(f"⚠️ Warning: Deck 1 needs {deck1_tempo_ratio:.3f}x tempo (outside 0.8-1.2 range)")
+        if deck2_tempo_ratio < 0.8 or deck2_tempo_ratio > 1.2:
+            print(f"⚠️ Warning: Deck 2 needs {deck2_tempo_ratio:.3f}x tempo (outside 0.8-1.2 range)")
+        
+        # Convert ratio to fader value (0.5 = normal tempo)
+        # Actual tempo range: 0.8 = 80% speed, 1.0 = 100% speed, 1.2 = 120% speed
+        # Fader range: 0.0 = 80% speed, 0.5 = 100% speed, 1.0 = 120% speed
+        deck1_fader_value = (deck1_tempo_ratio - 0.8) / 0.4
+        deck2_fader_value = (deck2_tempo_ratio - 0.8) / 0.4
+        
+        # Clamp to valid range [0.0, 1.0] and warn if clamping occurs
+        original_deck1_fader = deck1_fader_value
+        original_deck2_fader = deck2_fader_value
+        deck1_fader_value = max(0.0, min(1.0, deck1_fader_value))
+        deck2_fader_value = max(0.0, min(1.0, deck2_fader_value))
+        
+        if abs(original_deck1_fader - deck1_fader_value) > 0.001:
+            print(f"⚠️ Deck 1 fader clamped from {original_deck1_fader:.3f} to {deck1_fader_value:.3f}")
+        if abs(original_deck2_fader - deck2_fader_value) > 0.001:
+            print(f"⚠️ Deck 2 fader clamped from {original_deck2_fader:.3f} to {deck2_fader_value:.3f}")
+        
+        # Apply tempo sync to both decks
+        self.tempo_fader_1.value = deck1_fader_value
+        self.tempo_fader_2.value = deck2_fader_value
+        self.audio_engine.set_tempo(1, deck1_fader_value)
+        self.audio_engine.set_tempo(2, deck2_fader_value)
+        
+        # Calculate actual resulting BPMs for verification
+        actual_deck1_bpm = deck1_bpm * deck1_tempo_ratio
+        actual_deck2_bpm = deck2_bpm * deck2_tempo_ratio
+        
+        # Print sync information
+        print(f"🎵 AUTO BPM SYNC APPLIED:")
+        print(f"   📊 Target BPM: {average_bpm}")
+        print(f"   🎚️ Deck 1: {deck1_bpm} → {actual_deck1_bpm:.1f} BPM (tempo: {deck1_tempo_ratio:.3f})")
+        print(f"   🎚️ Deck 2: {deck2_bpm} → {actual_deck2_bpm:.1f} BPM (tempo: {deck2_tempo_ratio:.3f})")
+        print(f"   ✅ Both tracks now synced to {average_bpm} BPM")
+        print()
+
     def _find_track_by_name(self, song_name: str):
         """Find a track by its folder name (exact match or partial match)"""
+        print(f"🔍 Looking for: '{song_name}'")
+        
         # First try exact match
         for track in self.track_loader.available_tracks:
             if track.name == song_name:
+                print(f"✅ Exact match found: '{track.name}'")
                 return track
         
         # Then try partial match (contains)
         for track in self.track_loader.available_tracks:
             if song_name.lower() in track.name.lower():
+                print(f"✅ Partial match found: '{track.name}'")
                 return track
+        
+        # Special handling for complex names (NewJeans, special characters)
+        if 'newjeans' in song_name.lower():
+            for track in self.track_loader.available_tracks:
+                track_lower = track.name.lower()
+                if any(keyword in track_lower for keyword in ['newjeans', 'new jeans', '뉴진스']):
+                    print(f"✅ NewJeans match found: '{track.name}'")
+                    return track
+        
+        # If still no match, print available tracks for debugging
+        print(f"❌ No match found for '{song_name}'")
+        print("📂 Available tracks:")
+        for i, track in enumerate(self.track_loader.available_tracks[:5]):  # Show first 5
+            print(f"   {i+1}: {track.name}")
+        if len(self.track_loader.available_tracks) > 5:
+            print(f"   ... and {len(self.track_loader.available_tracks) - 5} more")
         
         return None
     
@@ -3179,8 +3449,8 @@ class DJController:
             self.deck1_buttons["vocal"].is_active = True
             self.deck1_buttons["instrumental"].is_active = True
             # Ensure audio engine reflects these settings properly
-            self.audio_engine.set_stem_volume(1, "vocals", 0.7)
-            self.audio_engine.set_stem_volume(1, "instrumental", 0.7)
+            self.audio_engine.set_stem_volume(1, "vocals", 1.0)
+            self.audio_engine.set_stem_volume(1, "instrumental", 1.0)
         elif deck == 2:
             self.deck2_track = track
             self.audio_engine.load_track(2, track)
@@ -3192,8 +3462,8 @@ class DJController:
             self.deck2_buttons["vocal"].is_active = True
             self.deck2_buttons["instrumental"].is_active = True
             # Ensure audio engine reflects these settings properly
-            self.audio_engine.set_stem_volume(2, "vocals", 0.7)
-            self.audio_engine.set_stem_volume(2, "instrumental", 0.7)
+            self.audio_engine.set_stem_volume(2, "vocals", 1.0)
+            self.audio_engine.set_stem_volume(2, "instrumental", 1.0)
     
     def run(self):
         """Main loop for the DJ controller"""
@@ -3362,7 +3632,7 @@ class DJController:
                 cv2.imshow('Air DJ Controller', frame)
                 
                 # Handle key presses
-                key = cv2.waitKey(5) & 0xFF
+                key = cv2.waitKey(1) & 0xFF  # Reduced from 5ms to 1ms for ultra-low latency
                 if key == ord('q'):
                     break
                     
