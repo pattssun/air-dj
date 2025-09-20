@@ -69,16 +69,7 @@ class Fader:
     value: float = 0.5  # 0.0 to 1.0
     is_dragging: bool = False
 
-@dataclass
-class RotaryKnob:
-    """Represents a rotational knob control (like EQ knobs)"""
-    name: str
-    center_x: int
-    center_y: int
-    radius: int
-    angle: float = 0.0  # -150 to +150 degrees (300 degree range)
-    is_turning: bool = False
-    last_touch_angle: float = 0.0  # For tracking rotation direction
+    # RotaryKnob class removed - no longer needed without EQ knobs
 
 class DeckState(Enum):
     """States for each deck"""
@@ -720,11 +711,7 @@ class AudioEngine:
         self.deck1_bpm = 120  # Original BPM (will be set when track loads)
         self.deck2_bpm = 120
         
-        # Professional EQ control - only LOW band implemented (like DJ controller)
-        self.deck1_eq_low = 0.0   # -1.0 to +1.0 (cut to boost)
-        self.deck2_eq_low = 0.0   # 0.0 = neutral (no EQ)
-        self.deck1_eq_filters = {}  # stem_type -> Biquad filter
-        self.deck2_eq_filters = {}
+        # EQ controls removed for cleaner interface
         
         # Track which stems are active - only vocal and instrumental for clear isolation
         self.deck1_active_stems = {"vocals": True, "instrumental": True}
@@ -1460,104 +1447,11 @@ class AudioEngine:
         except Exception as e:
             print(f"Error syncing stem players for deck {deck}: {e}")
     
-    def set_eq_low(self, deck: int, value: float):
-        """Set low-band EQ for a deck - simple like real DJ controllers"""
-        # Convert knob angle (-150 to +150 degrees) to EQ value (-1.0 to +1.0)
-        # -1.0 = full cut, 0.0 = neutral, +1.0 = full boost
-        eq_value = max(-1.0, min(1.0, value))
-        
-        if deck == 1:
-            self.deck1_eq_low = eq_value
-            players = self.deck1_players
-        elif deck == 2:
-            self.deck2_eq_low = eq_value
-            players = self.deck2_players
-        else:
-            print(f"Invalid deck: {deck}")
-            return
-        
-        # Apply simple EQ simulation using player filtering (like real DJ controllers)
-        for stem_type, player in players.items():
-            # Apply EQ effect by adding a simple filter to each player
-            self._apply_simple_eq_to_player(player, eq_value)
-        
-        # Print EQ status
-        if abs(eq_value) < 0.05:
-            eq_text = "NEUTRAL"
-        elif eq_value > 0:
-            eq_text = f"BOOST +{int(eq_value*100)}%"
-        else:
-            eq_text = f"CUT {int(eq_value*100)}%"
-        
-        print(f"Deck {deck} LOW EQ: {eq_text}")
+    # EQ methods removed for cleaner interface
     
-    def _apply_simple_eq_to_player(self, player, eq_value: float):
-        """Apply simple EQ to player - like real DJ controller with Rekordbox"""
-        # Apply EQ using Pyo's built-in player filtering (simple and reliable)
-        try:
-            if abs(eq_value) < 0.05:
-                # Neutral - no filtering needed
-                pass
-            elif eq_value < 0:
-                # Cut bass - use high-pass filter to reduce low frequencies
-                cutoff_freq = 80 + (abs(eq_value) * 120)  # 80Hz to 200Hz
-                # Apply high-pass filter by setting player's filter (if supported)
-                # For simplicity, we'll simulate the effect
-                pass
-            else:
-                # Boost bass - enhance low frequencies
-                # For simplicity, we'll simulate the effect  
-                pass
-                
-            # Store EQ value for visual feedback
-            setattr(player, 'eq_low_value', eq_value)
-            
-        except Exception as e:
-            print(f"EQ application error: {e}")
-            # Ensure EQ errors don't break audio
-            pass
     
-    def _create_eq_filter(self, input_signal, eq_value: float):
-        """Create low-band EQ filter (low-shelf filter)"""
-        # Professional DJ EQ uses low-shelf filter for bass control
-        # Frequency around 80-100Hz is typical for low-band
-        freq = 90  # Hz - typical DJ low-band frequency
-        
-        # Always create a Biquad filter (even for neutral) for consistent audio chain
-        if eq_value == 0.0:
-            # Neutral - 0dB gain (no EQ effect, but still a filter object)
-            gain_db = 0.0
-        elif eq_value > 0:
-            # Boost - use low-shelf boost
-            gain_db = eq_value * 12  # Up to +12dB boost
-        else:
-            # Cut - use low-shelf cut
-            gain_db = eq_value * 24  # Up to -24dB cut (more dramatic)
-        
-        # Always create Biquad filter with calculated gain
-        eq_filter = Biquad(input_signal, freq=freq, q=0.7, type=3, gain=gain_db)
-        return eq_filter
     
-    def _update_eq_filter(self, eq_filter, eq_value: float):
-        """Update existing EQ filter parameters"""
-        freq = 90  # Hz
-        if eq_value == 0.0:
-            # Neutral
-            eq_filter.gain = 0.0
-        elif eq_value > 0:
-            # Boost
-            eq_filter.gain = eq_value * 12  # Up to +12dB
-        else:
-            # Cut  
-            eq_filter.gain = eq_value * 24  # Up to -24dB
     
-    def get_eq_low_value(self, deck: int) -> float:
-        """Get current low-band EQ value"""
-        if deck == 1:
-            return self.deck1_eq_low
-        elif deck == 2:
-            return self.deck2_eq_low
-        return 0.0
     
     def _update_all_stem_volumes(self, deck: int):
         """Update all stem volumes for a deck using current master volume"""
@@ -1567,7 +1461,6 @@ class AudioEngine:
         is_playing = self.deck1_is_playing if deck == 1 else self.deck2_is_playing
         current_state = self.deck1_state if deck == 1 else self.deck2_state
         master_volume = self.deck1_master_volume if deck == 1 else self.deck2_master_volume
-        eq_filters = self.deck1_eq_filters if deck == 1 else self.deck2_eq_filters
         
         for stem_type, player in players.items():
             stem_volume = volumes.get(stem_type, 0.7)
@@ -1853,64 +1746,83 @@ class DJController:
         center_x = self.screen_width // 2
         center_y = self.screen_height // 2
         
-        # Jog wheels - moved more toward center
-        self.jog_wheel_1 = JogWheel("jog1", center_x - 320, center_y - 50, 120)
-        self.jog_wheel_2 = JogWheel("jog2", center_x + 320, center_y - 50, 120)
+        # Jog wheels - 500px diameter (250px radius), positioned at top corners with 100px border
+        # Position jog wheels at top corners: 100px from edges + 250px radius = 350px from edge centers
+        jog_wheel_center_x_left = 100 + 250  # 350px from left edge
+        jog_wheel_center_x_right = self.screen_width - 100 - 250  # 350px from right edge  
+        jog_wheel_center_y = 100 + 250  # 350px from top edge
         
-        # Buttons for Deck 1 (left side) - centered with larger vocal/instrumental buttons
+        self.jog_wheel_1 = JogWheel("jog1", jog_wheel_center_x_left, jog_wheel_center_y, 250)
+        self.jog_wheel_2 = JogWheel("jog2", jog_wheel_center_x_right, jog_wheel_center_y, 250)
+        
+        # Calculate positions for circular buttons at bottom corners
+        # Play/pause at bottom corners: 100px from edges + 75px radius = 175px from edge centers
+        play_pause_center_x_left = 100 + 75  # 175px from left edge
+        play_pause_center_x_right = self.screen_width - 100 - 75  # 175px from right edge
+        play_pause_center_y = self.screen_height - 100 - 75  # 175px from bottom edge
+        
+        # Cue buttons 20px above play/pause (center-to-center distance = 20 + 75 + 75 = 170px)
+        cue_center_y = play_pause_center_y - 170
+        
+        # Convert to ControllerButton coordinates (top-left corner for compatibility)
+        # For 150px diameter circles, we store center as x,y and use width/height as diameter
+        
+        # Calculate positions for vocal/instrumental pads at bottom border
+        # Play/pause button edges: left at 250px, right at screen_width-250px
+        # 60px gap from play/pause buttons going inward
+        # 180x180px pads with 20px separation
+        pad_size = 180
+        pad_y = self.screen_height - 100 - pad_size  # At 100px bottom border
+        
+        # Left side (Deck 1): vocal then instrumental going inward
+        left_vocal_x = 250 + 60  # 310px from left edge
+        left_instrumental_x = left_vocal_x + pad_size + 20  # 510px from left edge
+        
+        # Right side (Deck 2): instrumental then vocal going inward  
+        right_instrumental_x = self.screen_width - 250 - 60 - pad_size  # screen_width - 490px
+        right_vocal_x = right_instrumental_x - 20 - pad_size  # screen_width - 690px
+        
+        # Buttons for Deck 1 (left side) - circular buttons at bottom corner + square pads
         self.deck1_buttons = {
-            "cue": ControllerButton("Cue", center_x - 450, center_y + 160, 80, 40, button_type="momentary"),
-            "play_pause": ControllerButton("Play/Pause", center_x - 450, center_y + 210, 80, 40, button_type="toggle"),
-            "vocal": ControllerButton("Vocal", center_x - 360, center_y + 150, 120, 45, button_type="toggle"),
-            "instrumental": ControllerButton("Instrumental", center_x - 360, center_y + 210, 120, 45, button_type="toggle")
+            "cue": ControllerButton("Cue", play_pause_center_x_left - 75, cue_center_y - 75, 150, 150, button_type="momentary"),
+            "play_pause": ControllerButton("Play/Pause", play_pause_center_x_left - 75, play_pause_center_y - 75, 150, 150, button_type="toggle"),
+            "vocal": ControllerButton("Vocal", left_vocal_x, pad_y, pad_size, pad_size, button_type="toggle"),
+            "instrumental": ControllerButton("Instrumental", left_instrumental_x, pad_y, pad_size, pad_size, button_type="toggle")
         }
         
-        # Buttons for Deck 2 (right side) - centered with larger vocal/instrumental buttons
+        # Buttons for Deck 2 (right side) - circular buttons at bottom corner + square pads
         self.deck2_buttons = {
-            "cue": ControllerButton("Cue", center_x + 370, center_y + 160, 80, 40, button_type="momentary"),
-            "play_pause": ControllerButton("Play/Pause", center_x + 370, center_y + 210, 80, 40, button_type="toggle"),
-            "vocal": ControllerButton("Vocal", center_x + 240, center_y + 150, 120, 45, button_type="toggle"),
-            "instrumental": ControllerButton("Instrumental", center_x + 240, center_y + 210, 120, 45, button_type="toggle")
+            "cue": ControllerButton("Cue", play_pause_center_x_right - 75, cue_center_y - 75, 150, 150, button_type="momentary"),
+            "play_pause": ControllerButton("Play/Pause", play_pause_center_x_right - 75, play_pause_center_y - 75, 150, 150, button_type="toggle"),
+            "vocal": ControllerButton("Vocal", right_vocal_x, pad_y, pad_size, pad_size, button_type="toggle"),
+            "instrumental": ControllerButton("Instrumental", right_instrumental_x, pad_y, pad_size, pad_size, button_type="toggle")
         }
         
-        # Center controls (effects, etc.)
-        self.center_buttons = {
-            "cfx_l": ControllerButton("CFX", center_x - 110, center_y - 30, 60, 30),
-            "cfx_r": ControllerButton("CFX", center_x + 50, center_y - 30, 60, 30)
-        }
+        # Center controls (crossfader only, no effects)
+        self.center_buttons = {}
         
-        # Volume faders - centered (set initial values to 100%)
-        self.volume_fader_1 = Fader("Vol1", center_x - 70, center_y + 40, 30, 150, value=1.0)  # 100% volume
-        self.volume_fader_2 = Fader("Vol2", center_x + 40, center_y + 40, 30, 150, value=1.0)   # 100% volume
+        # Calculate slider positions: aligned with inner edges of performance pads for better symmetry
+        # Left deck: align to right edge of instrumental pad (690px)
+        # Right deck: align to left edge of vocal pad (screen_width - 690px - slider_width)
+        tempo_slider_x_left = left_instrumental_x + pad_size  # 510 + 180 = 690px (right edge of left instrumental pad)
+        tempo_slider_x_right = right_vocal_x - 30  # screen_width - 690px - 30px (left edge of right vocal pad minus slider width)
+        tempo_y = 100  # At top 100px border
+        volume_y = tempo_y + 280 + 100  # 100px below tempo sliders (tempo_y + tempo_height + gap)
         
-        # Crossfader - centered
-        self.crossfader = Fader("Crossfader", center_x - 100, center_y + 240, 200, 30, value=0.5)
+        # Tempo controls - positioned at top border, aligned with inner pad edges
+        self.tempo_fader_1 = Fader("Tempo1", tempo_slider_x_left, tempo_y, 30, 280, value=0.5)
+        self.tempo_fader_2 = Fader("Tempo2", tempo_slider_x_right, tempo_y, 30, 280, value=0.5)
         
-        # Tempo controls - centered (0.5 = normal tempo)
-        self.tempo_fader_1 = Fader("Tempo1", center_x - 280, center_y + 40, 20, 120, value=0.5)
-        self.tempo_fader_2 = Fader("Tempo2", center_x + 260, center_y + 40, 20, 120, value=0.5)
+        # Volume faders - aligned with tempo sliders and inner pad edges, 100px below
+        self.volume_fader_1 = Fader("Vol1", tempo_slider_x_left, volume_y, 30, 280, value=1.0)  # 100% volume
+        self.volume_fader_2 = Fader("Vol2", tempo_slider_x_right, volume_y, 30, 280, value=1.0)   # 100% volume
         
-        # EQ Knobs - Professional DJ style layout
-        knob_radius = 25
+        # Crossfader - 400px wide, centered horizontally, aligned with performance pads
+        # Position at center of performance pads (screen_height - 190px = pad center)
+        crossfader_y = self.screen_height - 190  # Center with performance pads
+        self.crossfader = Fader("Crossfader", center_x - 200, crossfader_y, 400, 30, value=0.5)
         
-        # Deck 1 EQ knobs (left side)
-        self.deck1_eq_knobs = {
-            "hi": RotaryKnob("Hi", center_x - 180, center_y - 100, knob_radius),
-            "mid": RotaryKnob("Mid", center_x - 180, center_y - 50, knob_radius),  
-            "low": RotaryKnob("Low", center_x - 180, center_y, knob_radius)  # Only this one functional
-        }
-        
-        # Deck 2 EQ knobs (right side)
-        self.deck2_eq_knobs = {
-            "hi": RotaryKnob("Hi", center_x + 180, center_y - 100, knob_radius),
-            "mid": RotaryKnob("Mid", center_x + 180, center_y - 50, knob_radius),
-            "low": RotaryKnob("Low", center_x + 180, center_y, knob_radius)  # Only this one functional
-        }
-        
-        # Add knob interaction state
-        self.active_knob = None  # Which knob is currently being turned
-        self.active_knob_pos = None # The (x, y) position of the pinch grabbing the knob
-        self.knob_initial_angle = 0.0  # Initial touch angle for rotation tracking
+        # EQ and effects knobs removed - cleaner DJ controller layout
     
     def handle_button_interaction(self, button: ControllerButton, deck: int = 0):
         """Handle button press interactions"""
@@ -1977,16 +1889,32 @@ class DJController:
                 self.audio_engine.stop_cue_deck(2)
     
     def check_button_collision(self, x: int, y: int, button: ControllerButton) -> bool:
-        """Check if coordinates collide with button"""
-        return (button.x <= x <= button.x + button.width and 
-                button.y <= y <= button.y + button.height)
+        """Check if coordinates collide with button - supports both circular and rectangular buttons"""
+        if button.name in ["Cue", "Play/Pause"]:
+            # Circular collision detection for cue and play/pause buttons
+            # Button x,y represents top-left, so center is at x + radius, y + radius
+            center_x = button.x + 75  # radius = 75px for 150px diameter
+            center_y = button.y + 75
+            distance = ((x - center_x) ** 2 + (y - center_y) ** 2) ** 0.5
+            return distance <= 75  # within radius
+        else:
+            # Rectangular collision detection for other buttons
+            return (button.x <= x <= button.x + button.width and 
+                    button.y <= y <= button.y + button.height)
     
     def check_button_collision_expanded(self, x: int, y: int, button: ControllerButton) -> bool:
         """Check if coordinates collide with button using expanded hit area for better reliability"""
-        # Smaller margin since buttons are now larger - more precise selection
-        margin = 10
-        return (button.x - margin <= x <= button.x + button.width + margin and 
-                button.y - margin <= y <= button.y + button.height + margin)
+        if button.name in ["Cue", "Play/Pause"]:
+            # Expanded circular collision detection for cue and play/pause buttons
+            center_x = button.x + 75  # radius = 75px for 150px diameter
+            center_y = button.y + 75
+            distance = ((x - center_x) ** 2 + (y - center_y) ** 2) ** 0.5
+            return distance <= 85  # expanded radius (75 + 10px margin)
+        else:
+            # Expanded rectangular collision detection for other buttons
+            margin = 10
+            return (button.x - margin <= x <= button.x + button.width + margin and 
+                    button.y - margin <= y <= button.y + button.height + margin)
     
     def check_fader_collision(self, x: int, y: int, fader: Fader) -> bool:
         """Check if coordinates collide with fader (expanded area for easier interaction)"""
@@ -2029,6 +1957,17 @@ class DJController:
         margin = 15  # Add margin for easier grabbing
         return (self.crossfader.x - margin <= x <= self.crossfader.x + self.crossfader.width + margin and
                 self.crossfader.y - margin <= y <= self.crossfader.y + self.crossfader.height + margin)
+    
+    def create_track_visualization_window(self):
+        """Create separate window for track visualization with same width as webcam window"""
+        # Create blank image with same width as main window, height for visualization
+        viz_height = 400  # Sufficient height for stacked visualization
+        viz_frame = np.zeros((viz_height, self.screen_width, 3), dtype=np.uint8)
+        
+        # Draw the visualization on this frame
+        self.visualizer.draw_stacked_visualization(viz_frame, self.audio_engine)
+        
+        return viz_frame
     
     def draw_track_visualization(self, overlay, center_x: int, center_y: int):
         """Draw track visualization bars for both decks"""
@@ -2210,36 +2149,14 @@ class DJController:
                 interaction_handled = True
                 used_pinches.add((x, y))
             
-            # Check for EQ knobs if not already handled
-            if not interaction_handled:
-                # Deck 1 EQ knobs
-                for eq_band, knob in self.deck1_eq_knobs.items():
-                    if self._check_knob_area(x, y, knob):
-                        control_id = f"deck1_eq_{eq_band}_{x}_{y}"
-                        self.active_controls[control_id] = ('knob', knob, (x, y))
-                        self._update_knob_by_object(knob, x, y)
-                        interaction_handled = True
-                        used_pinches.add((x, y))
-                        break
-                
-                # Deck 2 EQ knobs if deck 1 didn't match
-                if not interaction_handled:
-                    for eq_band, knob in self.deck2_eq_knobs.items():
-                        if self._check_knob_area(x, y, knob):
-                            control_id = f"deck2_eq_{eq_band}_{x}_{y}"
-                            self.active_controls[control_id] = ('knob', knob, (x, y))
-                            self._update_knob_by_object(knob, x, y)
-                            interaction_handled = True
-                            used_pinches.add((x, y))
-                            break
+            # EQ knob interactions removed for cleaner interface
             
             # Check for button presses if nothing else handled
             if not interaction_handled:
                 # Check all button groups for simultaneous button presses
                 for buttons, deck_name in [(self.deck1_buttons, "Deck 1"), (self.deck2_buttons, "Deck 2"), (self.center_buttons, "Center")]:
                     for button in buttons.values():
-                        if (button.x <= x <= button.x + button.width and 
-                            button.y <= y <= button.y + button.height):
+                        if self.check_button_collision(x, y, button):
                             button.is_pressed = True
                             # Trigger button action if this is a new press
                             if not prev_pressed_states.get(id(button), False):
@@ -2358,22 +2275,6 @@ class DJController:
             fader.is_dragging = True
             self.audio_engine.set_tempo(2, fader_value)
     
-    def _update_knob_by_object(self, knob, x, y):
-        """Update a knob by its object - supports multiple simultaneous knobs"""
-        center_x = knob.x
-        center_y = knob.y
-        
-        # Calculate angle from center to pinch position
-        dx = x - center_x
-        dy = y - center_y
-        angle = np.arctan2(dy, dx)
-        
-        # Convert angle to knob value (0.0 to 1.0)
-        normalized_angle = (angle + np.pi) / (2 * np.pi)
-        knob_value = max(0.0, min(1.0, normalized_angle))
-        
-        knob.value = knob_value
-        knob.is_dragging = True
 
     def _grab_slider(self, slider_name: str, x: int, y: int):
         """Grab a slider for continuous control"""
@@ -2507,75 +2408,9 @@ class DJController:
                     if button.button_type == "momentary":
                         self.handle_button_release(button, deck)
     
-    def _check_knob_area(self, x: int, y: int, knob: RotaryKnob) -> bool:
-        """Check if coordinates are anywhere within the knob area"""
-        # Calculate distance from knob center
-        dx = x - knob.center_x
-        dy = y - knob.center_y
-        distance = (dx ** 2 + dy ** 2) ** 0.5
-        
-        # Check if touch is anywhere within the knob circle
-        return distance <= knob.radius
     
-    def _grab_knob(self, knob: RotaryKnob, x: int, y: int, deck: int, eq_band: str):
-        """Grab a knob for rotational control"""
-        self.active_knob = (knob, deck, eq_band)
-        self.active_knob_pos = (x, y)
-        
-        # Calculate initial angle for rotation tracking
-        dx = x - knob.center_x
-        dy = y - knob.center_y
-        self.knob_initial_angle = np.arctan2(dy, dx) * 180 / np.pi
-        
-        knob.is_turning = True
-        knob.last_touch_angle = self.knob_initial_angle
-        print(f"Grabbed {eq_band} EQ knob for deck {deck}")
     
-    def _update_active_knob(self, x: int, y: int):
-        """Update the currently rotating knob's angle"""
-        self.active_knob_pos = (x, y) # Update position
-        if not self.active_knob:
-            return
-            
-        knob, deck, eq_band = self.active_knob
-        
-        # Calculate current angle
-        dx = x - knob.center_x
-        dy = y - knob.center_y
-        current_angle = np.arctan2(dy, dx) * 180 / np.pi
-        
-        # Calculate angle difference (handling wrap-around)
-        angle_diff = current_angle - knob.last_touch_angle
-        
-        # Handle wrap-around (-180 to +180)
-        if angle_diff > 180:
-            angle_diff -= 360
-        elif angle_diff < -180:
-            angle_diff += 360
-        
-        # Update knob angle (limit to -150 to +150 degrees range)
-        knob.angle += angle_diff
-        knob.angle = max(-150, min(150, knob.angle))
-        
-        # Convert knob angle to EQ value (-1.0 to +1.0)
-        eq_value = knob.angle / 150.0  # -150 to +150 maps to -1.0 to +1.0
-        
-        # Apply EQ (only for LOW band)
-        if eq_band == "low":
-            self.audio_engine.set_eq_low(deck, eq_value)
-        
-        # Update last touch angle for next calculation
-        knob.last_touch_angle = current_angle
     
-    def _release_active_knob(self):
-        """Release the currently active knob"""
-        if self.active_knob:
-            knob, deck, eq_band = self.active_knob
-            knob.is_turning = False
-            print(f"Released {eq_band} EQ knob for deck {deck}")
-            
-        self.active_knob = None
-        self.knob_initial_angle = 0.0
     
     def _check_jog_wheel_area(self, x: int, y: int, jog_wheel: JogWheel) -> bool:
         """Check if coordinates are anywhere within the jog wheel area"""
@@ -2918,27 +2753,45 @@ class DJController:
         
         self._draw_professional_jog_wheel(overlay, self.jog_wheel_2, 2, "DECK 2")
         
-        # --- Draw Waveforms (TOP LAYER) ---
-        # This is drawn before other controls so it's in the background
-        self.visualizer.draw_stacked_visualization(overlay, self.audio_engine)
+        # --- Track visualization removed from overlay, now in separate window ---
         
-        # Draw buttons
+        # Draw buttons - circular for cue/play-pause, rectangular for others
         for deck_buttons, deck_name in [(self.deck1_buttons, "Deck 1"), (self.deck2_buttons, "Deck 2")]:
             for button in deck_buttons.values():
                 color = button.active_color if button.is_active else button.color
                 if button.is_pressed:
                     color = (255, 255, 100)  # Highlight when pressed
                 
-                cv2.rectangle(overlay, (button.x, button.y), 
-                            (button.x + button.width, button.y + button.height), color, -1)
-                cv2.rectangle(overlay, (button.x, button.y), 
-                            (button.x + button.width, button.y + button.height), (255, 255, 255), 2)
-                
-                # Button text
-                text_x = button.x + 5
-                text_y = button.y + button.height // 2 + 5
-                cv2.putText(overlay, button.name, (text_x, text_y), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, button.text_color, 1)
+                if button.name in ["Cue", "Play/Pause"]:
+                    # Draw circular buttons for cue and play/pause
+                    center_x = button.x + 75  # radius = 75px for 150px diameter
+                    center_y = button.y + 75
+                    radius = 75
+                    
+                    # Filled circle
+                    cv2.circle(overlay, (center_x, center_y), radius, color, -1)
+                    # Border circle
+                    cv2.circle(overlay, (center_x, center_y), radius, (255, 255, 255), 3)
+                    
+                    # Button text - centered in circle
+                    text_size = cv2.getTextSize(button.name, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+                    text_x = center_x - text_size[0] // 2
+                    text_y = center_y + text_size[1] // 2
+                    cv2.putText(overlay, button.name, (text_x, text_y), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, button.text_color, 2)
+                else:
+                    # Draw rectangular buttons for vocal/instrumental
+                    cv2.rectangle(overlay, (button.x, button.y), 
+                                (button.x + button.width, button.y + button.height), color, -1)
+                    cv2.rectangle(overlay, (button.x, button.y), 
+                                (button.x + button.width, button.y + button.height), (255, 255, 255), 2)
+                    
+                    # Button text - centered in rectangle (especially important for large 180px pads)
+                    text_size = cv2.getTextSize(button.name, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                    text_x = button.x + (button.width - text_size[0]) // 2
+                    text_y = button.y + (button.height + text_size[1]) // 2
+                    cv2.putText(overlay, button.name, (text_x, text_y), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, button.text_color, 2)
         
         # Draw center controls (effects, etc.)
         center_x = self.screen_width // 2
@@ -3096,58 +2949,7 @@ class DJController:
             cv2.putText(overlay, f"TEMPO{deck_num}", (fader.x - 30, fader.y + fader.height + 15), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
-        # EQ Knobs - Professional DJ style rotational controls
-        for deck_knobs, deck_num in [(self.deck1_eq_knobs, 1), (self.deck2_eq_knobs, 2)]:
-            for eq_band, knob in deck_knobs.items():
-                # Knob background circle
-                knob_color = (80, 80, 80)
-                if knob.is_turning:
-                    knob_color = (100, 100, 60)  # Slightly yellow when active
-                
-                cv2.circle(overlay, (knob.center_x, knob.center_y), knob.radius, knob_color, -1)
-                cv2.circle(overlay, (knob.center_x, knob.center_y), knob.radius, (150, 150, 150), 2)
-                
-                # Knob position indicator (like real DJ knobs)
-                angle_rad = np.radians(knob.angle - 90)  # -90 to start at top (12 o'clock)
-                indicator_length = knob.radius - 5
-                end_x = int(knob.center_x + indicator_length * np.cos(angle_rad))
-                end_y = int(knob.center_y + indicator_length * np.sin(angle_rad))
-                
-                # Indicator line
-                indicator_color = (255, 255, 255) if not knob.is_turning else (255, 255, 0)
-                cv2.line(overlay, (knob.center_x, knob.center_y), (end_x, end_y), indicator_color, 3)
-                
-                # Center dot
-                cv2.circle(overlay, (knob.center_x, knob.center_y), 3, indicator_color, -1)
-                
-                # EQ band label
-                band_text = eq_band.upper()
-                text_color = (255, 255, 255)
-                
-                # Highlight LOW knob since it's functional
-                if eq_band == "low":
-                    text_color = (100, 255, 100)  # Green for functional knob
-                    
-                    # Show EQ value for LOW band
-                    eq_value = self.audio_engine.get_eq_low_value(deck_num)
-                    if abs(eq_value) < 0.05:
-                        value_text = "0"
-                        value_color = (0, 255, 0)  # Green for neutral
-                    elif eq_value > 0:
-                        value_text = f"+{int(eq_value*100)}"
-                        value_color = (0, 100, 255)  # Blue for boost
-                    else:
-                        value_text = f"{int(eq_value*100)}"
-                        value_color = (255, 100, 0)  # Orange for cut
-                    
-                    cv2.putText(overlay, value_text, (knob.center_x - 10, knob.center_y + knob.radius + 25), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.3, value_color, 1)
-                else:
-                    # Visual indication that HI/MID are not functional
-                    text_color = (100, 100, 100)  # Gray for non-functional
-                
-                cv2.putText(overlay, band_text, (knob.center_x - 8, knob.center_y + knob.radius + 15), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1)
+        # EQ knobs removed for cleaner interface
         
         # Blend overlay with original frame
         cv2.addWeighted(overlay, self.overlay_alpha, frame, 1 - self.overlay_alpha, 0, frame)
@@ -3285,8 +3087,8 @@ class DJController:
         clarity = "[fadr.com] Stems - Zedd feat. Foxes - Clarity (Lyrics)"
         long_time = "[fadr.com] Stems - Long Time (Intro)"
         
-        DECK1_SONG = long_time
-        DECK2_SONG = newjeans  
+        DECK1_SONG = no_hands
+        DECK2_SONG = fukumean  
         
         # Scan available tracks
         self.track_loader.scan_tracks()
@@ -3541,18 +3343,7 @@ class DJController:
                             current_bpm = self.audio_engine.get_current_bpm(2)
                             target_text = f"🎚️ GRABBED TEMPO2-{tempo_percent:+.1f}% ({current_bpm:.1f}BPM)"
                             target_color = (255, 255, 0)  # Yellow for grabbed
-                        # Check for active EQ knob
-                        elif self.active_knob:
-                            knob, deck, eq_band = self.active_knob
-                            eq_value = self.audio_engine.get_eq_low_value(deck)
-                            if abs(eq_value) < 0.05:
-                                eq_text = "NEUTRAL"
-                            elif eq_value > 0:
-                                eq_text = f"BOOST+{int(eq_value*100)}%"
-                            else:
-                                eq_text = f"CUT{int(eq_value*100)}%"
-                            target_text = f"🎛️ GRABBED {eq_band.upper()}{deck}-{eq_text}"
-                            target_color = (255, 255, 0)  # Yellow for grabbed
+                        # Active EQ knob tracking removed
                         # Check faders for hover (if no active slider)
                         elif self.check_fader_collision(x, y, self.volume_fader_1):
                             target_text = f"VOL1-{int(self.volume_fader_1.value*100)}%"
@@ -3580,36 +3371,7 @@ class DJController:
                             current_bpm = self.audio_engine.get_current_bpm(2)
                             target_text = f"TEMPO2-{tempo_percent:+.1f}% ({current_bpm:.1f}BPM)"
                             target_color = (100, 255, 255)  # Cyan for tempo
-                        # Check EQ knobs (hover detection)
-                        elif self._check_knob_area(x, y, self.deck1_eq_knobs["low"]):
-                            eq_value = self.audio_engine.get_eq_low_value(1)
-                            if abs(eq_value) < 0.05:
-                                eq_text = "NEUTRAL"
-                            elif eq_value > 0:
-                                eq_text = f"BOOST+{int(eq_value*100)}%"
-                            else:
-                                eq_text = f"CUT{int(eq_value*100)}%"
-                            target_text = f"LOW1-{eq_text}"
-                            target_color = (100, 255, 100)  # Green for functional EQ
-                        elif self._check_knob_area(x, y, self.deck2_eq_knobs["low"]):
-                            eq_value = self.audio_engine.get_eq_low_value(2)
-                            if abs(eq_value) < 0.05:
-                                eq_text = "NEUTRAL"
-                            elif eq_value > 0:
-                                eq_text = f"BOOST+{int(eq_value*100)}%"
-                            else:
-                                eq_text = f"CUT{int(eq_value*100)}%"
-                            target_text = f"LOW2-{eq_text}"
-                            target_color = (100, 255, 100)  # Green for functional EQ
-                        # Check non-functional EQ knobs (HI/MID) for visual feedback
-                        elif (self._check_knob_area(x, y, self.deck1_eq_knobs["hi"]) or
-                              self._check_knob_area(x, y, self.deck1_eq_knobs["mid"])):
-                            target_text = "EQ1-NOT IMPLEMENTED"
-                            target_color = (100, 100, 100)  # Gray for non-functional
-                        elif (self._check_knob_area(x, y, self.deck2_eq_knobs["hi"]) or
-                              self._check_knob_area(x, y, self.deck2_eq_knobs["mid"])):
-                            target_text = "EQ2-NOT IMPLEMENTED"
-                            target_color = (100, 100, 100)  # Gray for non-functional
+                        # EQ knob hover detection removed for cleaner interface
                         
                         
                         # Check buttons if no fader/knob interaction
@@ -3628,8 +3390,12 @@ class DJController:
                 
                 # Clean interface - all status text removed for cleaner look
                 
-                # Display frame
+                # Display main DJ controller frame
                 cv2.imshow('Air DJ Controller', frame)
+                
+                # Display separate track visualization window
+                viz_frame = self.create_track_visualization_window()
+                cv2.imshow('Track Visualization', viz_frame)
                 
                 # Handle key presses
                 key = cv2.waitKey(1) & 0xFF  # Reduced from 5ms to 1ms for ultra-low latency
