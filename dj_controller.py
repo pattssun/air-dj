@@ -1715,6 +1715,16 @@ class DJController:
         # Initialize controller elements
         self.setup_controller_layout()
         
+        # Load UI images
+        self.cue_image = cv2.imread('ui/Cue.png', cv2.IMREAD_UNCHANGED)
+        self.play_pause_image = cv2.imread('ui/Play:Pause.png', cv2.IMREAD_UNCHANGED)
+        
+        # Verify images loaded successfully
+        if self.cue_image is None:
+            print("Warning: Failed to load ui/Cue.png")
+        if self.play_pause_image is None:
+            print("Warning: Failed to load ui/Play:Pause.png")
+        
         # State
         self.current_pinches = []
         self.deck1_track = None
@@ -2744,6 +2754,41 @@ class DJController:
             except:
                 pass
     
+    def _draw_image_with_alpha(self, overlay, image, x, y):
+        """Draw an image with circular mask onto overlay at specified position"""
+        if image is None:
+            return
+        
+        h, w = image.shape[:2]
+        
+        # Ensure we don't go out of bounds
+        if x < 0 or y < 0 or x + w > overlay.shape[1] or y + h > overlay.shape[0]:
+            return
+        
+        # Create circular mask (75px radius for 150px diameter)
+        center = (75, 75)  # Center of the 150x150 image
+        radius = 75
+        
+        # Create coordinate grids
+        y_coords, x_coords = np.ogrid[:h, :w]
+        mask = (x_coords - center[0])**2 + (y_coords - center[1])**2 <= radius**2
+        
+        # Extract BGR channels (ignore alpha since we're masking)
+        if len(image.shape) == 4:
+            bgr = image[:, :, :3]
+        else:
+            bgr = image
+        
+        # Apply circular mask to only draw pixels within the circle
+        overlay_region = overlay[y:y+h, x:x+w]
+        
+        for c in range(3):
+            overlay_region[:, :, c] = np.where(mask, bgr[:, :, c], overlay_region[:, :, c])
+    
+    def _draw_button_ring(self, overlay, center_x, center_y, radius, color, thickness=4):
+        """Draw a colored ring around a circular button"""
+        cv2.circle(overlay, (center_x, center_y), radius, color, thickness)
+
     def draw_controller_overlay(self, frame):
         """Draw the DJ controller overlay on the frame"""
         overlay = frame.copy()
@@ -2763,22 +2808,32 @@ class DJController:
                     color = (255, 255, 100)  # Highlight when pressed
                 
                 if button.name in ["Cue", "Play/Pause"]:
-                    # Draw circular buttons for cue and play/pause
+                    # Draw image-based buttons for cue and play/pause
                     center_x = button.x + 75  # radius = 75px for 150px diameter
                     center_y = button.y + 75
                     radius = 75
                     
-                    # Filled circle
-                    cv2.circle(overlay, (center_x, center_y), radius, color, -1)
-                    # Border circle
-                    cv2.circle(overlay, (center_x, center_y), radius, (255, 255, 255), 3)
+                    # Select appropriate image
+                    if button.name == "Cue":
+                        image = self.cue_image
+                    else:  # Play/Pause
+                        image = self.play_pause_image
                     
-                    # Button text - centered in circle
-                    text_size = cv2.getTextSize(button.name, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-                    text_x = center_x - text_size[0] // 2
-                    text_y = center_y + text_size[1] // 2
-                    cv2.putText(overlay, button.name, (text_x, text_y), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, button.text_color, 2)
+                    # Draw the button image (images are 150x150, button.x/y is top-left)
+                    self._draw_image_with_alpha(overlay, image, button.x, button.y)
+                    
+                    # Draw colored ring around button instead of changing whole button color
+                    ring_color = color
+                    if button.is_pressed:
+                        ring_color = (255, 255, 100)  # Highlight when pressed
+                    elif button.is_active:
+                        ring_color = button.active_color
+                    else:
+                        ring_color = button.color
+                    
+                    # Only draw ring if button has a state (not default gray)
+                    if button.is_active or button.is_pressed:
+                        self._draw_button_ring(overlay, center_x, center_y, radius, ring_color, 4)
                 else:
                     # Draw rectangular buttons for vocal/instrumental
                     cv2.rectangle(overlay, (button.x, button.y), 
