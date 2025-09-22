@@ -376,7 +376,15 @@ class RekordboxStyleVisualizer:
 
         # --- Get Track and Timing Info ---
         position_ratio = audio_engine.get_playback_position(deck_num)
+        
+        # Get tempo multiplier for BPM sync visualization
+        tempo_multiplier = audio_engine.get_tempo_multiplier(deck_num)
+        
+        # Calculate current time accounting for BPM sync
+        # When tempo is faster (>1.0), we're further in the original track
+        # When tempo is slower (<1.0), we're behind in the original track
         current_time_sec = position_ratio * waveform_data.duration
+        
         is_playing = (audio_engine.deck1_is_playing if deck_num == 1 
                      else audio_engine.deck2_is_playing)
         
@@ -387,7 +395,7 @@ class RekordboxStyleVisualizer:
 
         # --- Draw Enhanced Waveform ---
         self._draw_scrolling_waveform(overlay, x, y, width, center_x,
-                                      waveform_data, current_time_sec)
+                                      waveform_data, current_time_sec, tempo_multiplier)
 
         # --- Draw Professional Track Info ---
         # Track name (top left)
@@ -395,12 +403,7 @@ class RekordboxStyleVisualizer:
         cv2.putText(overlay, f"DECK {deck_num}: {truncated_name}", (x + 5, y - 8),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.text_color, 1)
         
-        # BPM display (top right, like Rekordbox)
-        bpm_text = f"{track_bpm:.1f} BPM"
-        text_size = cv2.getTextSize(bpm_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-        bpm_x = x + width - text_size[0] - 10
-        cv2.putText(overlay, bpm_text, (bpm_x, y - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, self.bpm_color, 2)
+        # BPM display removed for cleaner visualization
         
         # Time position display (bottom right)
         minutes = int(current_time_sec // 60)
@@ -411,14 +414,10 @@ class RekordboxStyleVisualizer:
         cv2.putText(overlay, time_text, (time_x, y + self.track_height - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.text_color, 1)
         
-        # Play/pause indicator (bottom left)
-        status_text = "▶ PLAYING" if is_playing else "⏸ PAUSED"
-        status_color = (100, 255, 100) if is_playing else (255, 100, 100)
-        cv2.putText(overlay, status_text, (x + 5, y + self.track_height - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, status_color, 1)
+        # Play/pause indicator removed for cleaner visualization
 
     def _draw_scrolling_waveform(self, overlay, x: int, y: int, width: int, center_x: int,
-                                 waveform_data: WaveformData, current_time: float):
+                                 waveform_data: WaveformData, current_time: float, tempo_multiplier: float = 1.0):
         """Draws professional Rekordbox-style stereo waveform with enhanced beat/bar grid."""
         
         # --- Calculate Precise Audio Window ---
@@ -436,10 +435,15 @@ class RekordboxStyleVisualizer:
         timeline_info = f"Timeline: {start_time:.1f}s to {end_time:.1f}s ({end_time - start_time:.1f}s visible)"
         
         # Draw beat lines first (behind bars) - MAKE THESE ALWAYS SHOW
+        # Scale beat times by tempo multiplier for BPM sync visualization
         beat_lines_drawn = 0
         for beat_time in waveform_data.beat_times:
-            if start_time <= beat_time <= end_time:
-                px = time_to_pixel(beat_time)
+            # Adjust beat time for BPM sync - slower tempo spreads beats out, faster tempo compresses them
+            # If tempo_multiplier < 1.0 (slower), beats appear later (spread out)
+            # If tempo_multiplier > 1.0 (faster), beats appear earlier (compressed)
+            synced_beat_time = beat_time * tempo_multiplier
+            if start_time <= synced_beat_time <= end_time:
+                px = time_to_pixel(synced_beat_time)
                 # PRIORITY: Ultra-prominent beat lines extending full height
                 cv2.line(overlay, (px, y + 5), (px, y + self.track_height - 5), 
                         self.beat_color, 3)  # Extra thick beat lines - PRIORITY
@@ -449,8 +453,10 @@ class RekordboxStyleVisualizer:
         bar_count = 0
         bar_lines_drawn = 0
         for bar_time in waveform_data.bar_times:
-            if start_time <= bar_time <= end_time:
-                px = time_to_pixel(bar_time)
+            # Adjust bar time for BPM sync - same scaling as beats
+            synced_bar_time = bar_time * tempo_multiplier
+            if start_time <= synced_bar_time <= end_time:
+                px = time_to_pixel(synced_bar_time)
                 # Every 4th bar gets ultra prominence (phrase markers)
                 if bar_count % 4 == 0:
                     # PRIORITY: Major phrase markers - maximum visibility
@@ -484,21 +490,26 @@ class RekordboxStyleVisualizer:
             print(f"📊 8-Second View: Showing {total_visible:.1f}s | Beats: {beat_lines_drawn} | Bars: {bar_lines_drawn}")
 
         # --- Draw Stereo-Style Multi-Band Waveforms with Better Separation ---
+        # Adjust waveform timing for BPM sync - same scaling as beat grid
+        synced_start_time = start_time / tempo_multiplier
+        synced_seconds_per_pixel = seconds_per_pixel / tempo_multiplier
+        synced_duration = waveform_data.duration / tempo_multiplier
+        
         # Bass (bottom layer, full amplitude for strong visual impact)
-        self._render_stereo_waveform_band(overlay, width, x, waveform_center_y, start_time, 
-                                         seconds_per_pixel, waveform_data.duration, 
+        self._render_stereo_waveform_band(overlay, width, x, waveform_center_y, synced_start_time, 
+                                         synced_seconds_per_pixel, synced_duration, 
                                          waveform_data.low_freq_peaks, self.low_freq_color, 
                                          max_amplitude * 0.9, alpha=0.85)
         
         # Mids (middle layer, distinct sizing)
-        self._render_stereo_waveform_band(overlay, width, x, waveform_center_y, start_time, 
-                                         seconds_per_pixel, waveform_data.duration, 
+        self._render_stereo_waveform_band(overlay, width, x, waveform_center_y, synced_start_time, 
+                                         synced_seconds_per_pixel, synced_duration, 
                                          waveform_data.mid_freq_peaks, self.mid_freq_color, 
                                          max_amplitude * 0.65, alpha=0.95)
         
         # Highs (top layer, smaller but very bright for clarity)
-        self._render_stereo_waveform_band(overlay, width, x, waveform_center_y, start_time, 
-                                         seconds_per_pixel, waveform_data.duration, 
+        self._render_stereo_waveform_band(overlay, width, x, waveform_center_y, synced_start_time, 
+                                         synced_seconds_per_pixel, synced_duration, 
                                          waveform_data.high_freq_peaks, self.high_freq_color, 
                                          max_amplitude * 0.4, alpha=1.0)
 
@@ -1718,17 +1729,28 @@ class DJController:
         # Load UI images
         self.cue_image = cv2.imread('ui/Cue.png', cv2.IMREAD_UNCHANGED)
         self.play_pause_image = cv2.imread('ui/Play:Pause.png', cv2.IMREAD_UNCHANGED)
+        self.jogwheel_image = cv2.imread('ui/jogwheel2.png', cv2.IMREAD_UNCHANGED)
+        
+        # Resize jogwheel to 500px diameter if loaded successfully
+        if self.jogwheel_image is not None:
+            self.jogwheel_image = cv2.resize(self.jogwheel_image, (500, 500))
         
         # Verify images loaded successfully
         if self.cue_image is None:
             print("Warning: Failed to load ui/Cue.png")
         if self.play_pause_image is None:
             print("Warning: Failed to load ui/Play:Pause.png")
+        if self.jogwheel_image is None:
+            print("Warning: Failed to load ui/jogwheel2.png")
         
         # State
         self.current_pinches = []
         self.deck1_track = None
         self.deck2_track = None
+        
+        # Jog wheel rotation states
+        self.deck1_jog_rotation = 0.0  # Current rotation angle in degrees
+        self.deck2_jog_rotation = 0.0  # Current rotation angle in degrees
         
         # Slider interaction state - for intuitive pinch-to-grab behavior
         self.active_slider = None  # Which slider is currently grabbed
@@ -1841,18 +1863,23 @@ class DJController:
         self.tempo_fader_1 = Fader("Tempo1", tempo_slider_x_left, tempo_y, 30, 280, value=0.5)
         self.tempo_fader_2 = Fader("Tempo2", tempo_slider_x_right, tempo_y, 30, 280, value=0.5)
         
-        # Volume faders - middle point aligned with top of upper pads, 100px to the sides of jog wheels
+        # Volume faders - middle point aligned with middle gap between pads, height matches pad grid
         volume_fader_x_left = jog_wheel_center_x_left + 250 + 100  # 100px to the right of left jog wheel
         volume_fader_x_right = jog_wheel_center_x_right - 250 - 100 - 30  # 100px to the left of right jog wheel (minus slider width)
-        volume_fader_y = top_pad_y - 140  # Middle point aligned with top of upper pads (slider height/2 = 140px)
         
-        self.volume_fader_1 = Fader("Vol1", volume_fader_x_left, volume_fader_y, 30, 280, value=1.0)  # 100% volume
-        self.volume_fader_2 = Fader("Vol2", volume_fader_x_right, volume_fader_y, 30, 280, value=1.0)   # 100% volume
+        # Calculate middle of gap between top and bottom pads
+        gap_middle_y = bottom_pad_y - pad_separation // 2  # Middle of 20px gap
+        # Height covers both pads + gap = 150 + 20 + 150 = 320px
+        volume_fader_height = pad_size + pad_separation + pad_size  # 320px
+        volume_fader_y = gap_middle_y - volume_fader_height // 2  # Center slider on gap middle
         
-        # Crossfader - 400px wide, centered horizontally, aligned with performance pads
-        # Position at center of performance pads (screen_height - 190px = pad center)
-        crossfader_y = self.screen_height - 190  # Center with performance pads
-        self.crossfader = Fader("Crossfader", center_x - 200, crossfader_y, 400, 30, value=0.5)
+        self.volume_fader_1 = Fader("Vol1", volume_fader_x_left, volume_fader_y, 30, volume_fader_height, value=1.0)
+        self.volume_fader_2 = Fader("Vol2", volume_fader_x_right, volume_fader_y, 30, volume_fader_height, value=1.0)
+        
+        # Crossfader - 2/3 original width (267px), centered horizontally, aligned with pad gap
+        crossfader_width = int(400 * 2 / 3)  # 267px (2/3 of original)
+        crossfader_y = gap_middle_y  # Align with middle of gap between pads
+        self.crossfader = Fader("Crossfader", center_x - crossfader_width // 2, crossfader_y, crossfader_width, 30, value=0.5)
         
         # EQ and effects knobs removed - cleaner DJ controller layout
     
@@ -1862,9 +1889,15 @@ class DJController:
             if deck == 1:
                 self.audio_engine.cue_deck(1)
                 button.is_active = True
+                # Reset jog wheel rotation when cued
+                self.deck1_jog_rotation = 0.0
+                self.jog_wheel_1.current_angle = 0.0
             elif deck == 2:
                 self.audio_engine.cue_deck(2)
                 button.is_active = True
+                # Reset jog wheel rotation when cued
+                self.deck2_jog_rotation = 0.0
+                self.jog_wheel_2.current_angle = 0.0
         
         elif button.name == "Play/Pause":
             if button.button_type == "toggle":
@@ -2175,19 +2208,19 @@ class DJController:
                 interaction_handled = True
                 used_pinches.add((x, y))
             
-            # Check for tempo sliders if not already handled
-            if not interaction_handled and self.check_fader_collision(x, y, self.tempo_fader_1):
-                control_id = f"tempo_fader_1_{x}_{y}"
-                self.active_controls[control_id] = ('slider', 'tempo_fader_1', (x, y))
-                self._update_slider_by_name('tempo_fader_1', x, y)
-                interaction_handled = True
-                used_pinches.add((x, y))
-            elif not interaction_handled and self.check_fader_collision(x, y, self.tempo_fader_2):
-                control_id = f"tempo_fader_2_{x}_{y}"
-                self.active_controls[control_id] = ('slider', 'tempo_fader_2', (x, y))
-                self._update_slider_by_name('tempo_fader_2', x, y)
-                interaction_handled = True
-                used_pinches.add((x, y))
+            # DISABLED: Check for tempo sliders - interaction removed but code preserved
+            # if not interaction_handled and self.check_fader_collision(x, y, self.tempo_fader_1):
+            #     control_id = f"tempo_fader_1_{x}_{y}"
+            #     self.active_controls[control_id] = ('slider', 'tempo_fader_1', (x, y))
+            #     self._update_slider_by_name('tempo_fader_1', x, y)
+            #     interaction_handled = True
+            #     used_pinches.add((x, y))
+            # elif not interaction_handled and self.check_fader_collision(x, y, self.tempo_fader_2):
+            #     control_id = f"tempo_fader_2_{x}_{y}"
+            #     self.active_controls[control_id] = ('slider', 'tempo_fader_2', (x, y))
+            #     self._update_slider_by_name('tempo_fader_2', x, y)
+            #     interaction_handled = True
+            #     used_pinches.add((x, y))
             
             # EQ knob interactions removed for cleaner interface
             
@@ -2224,10 +2257,11 @@ class DJController:
                             self.volume_fader_2.is_dragging = False
                         elif control_obj == 'crossfader':
                             self.crossfader.is_dragging = False
-                        elif control_obj == 'tempo_fader_1':
-                            self.tempo_fader_1.is_dragging = False
-                        elif control_obj == 'tempo_fader_2':
-                            self.tempo_fader_2.is_dragging = False
+                        # DISABLED: Tempo fader cleanup - interaction removed but code preserved  
+                        # elif control_obj == 'tempo_fader_1':
+                        #     self.tempo_fader_1.is_dragging = False
+                        # elif control_obj == 'tempo_fader_2':
+                        #     self.tempo_fader_2.is_dragging = False
                 elif control_type == 'knob':
                     control_obj.is_dragging = False
             
@@ -2299,21 +2333,22 @@ class DJController:
             fader.is_dragging = True
             self.audio_engine.set_crossfader_position(crossfader_value)
             
-        elif slider_name == 'tempo_fader_1':
-            fader = self.tempo_fader_1
-            relative_y = (y - fader.y) / fader.height
-            fader_value = max(0.0, min(1.0, 1.0 - relative_y))
-            fader.value = fader_value
-            fader.is_dragging = True
-            self.audio_engine.set_tempo(1, fader_value)
-            
-        elif slider_name == 'tempo_fader_2':
-            fader = self.tempo_fader_2
-            relative_y = (y - fader.y) / fader.height
-            fader_value = max(0.0, min(1.0, 1.0 - relative_y))
-            fader.value = fader_value
-            fader.is_dragging = True
-            self.audio_engine.set_tempo(2, fader_value)
+        # DISABLED: Tempo fader processing - interaction removed but code preserved
+        # elif slider_name == 'tempo_fader_1':
+        #     fader = self.tempo_fader_1
+        #     relative_y = (y - fader.y) / fader.height
+        #     fader_value = max(0.0, min(1.0, 1.0 - relative_y))
+        #     fader.value = fader_value
+        #     fader.is_dragging = True
+        #     self.audio_engine.set_tempo(1, fader_value)
+        #     
+        # elif slider_name == 'tempo_fader_2':
+        #     fader = self.tempo_fader_2
+        #     relative_y = (y - fader.y) / fader.height
+        #     fader_value = max(0.0, min(1.0, 1.0 - relative_y))
+        #     fader.value = fader_value
+        #     fader.is_dragging = True
+        #     self.audio_engine.set_tempo(2, fader_value)
     
 
     def _grab_slider(self, slider_name: str, x: int, y: int):
@@ -2334,14 +2369,15 @@ class DJController:
             fader = self.crossfader
             current_pos = fader.x + fader.value * fader.width
             self.slider_grab_offset = x - current_pos
-        elif slider_name == 'tempo_fader_1':
-            fader = self.tempo_fader_1
-            current_pos = fader.y + (1.0 - fader.value) * fader.height
-            self.slider_grab_offset = y - current_pos
-        elif slider_name == 'tempo_fader_2':
-            fader = self.tempo_fader_2
-            current_pos = fader.y + (1.0 - fader.value) * fader.height
-            self.slider_grab_offset = y - current_pos
+        # DISABLED: Tempo fader grab processing - interaction removed but code preserved
+        # elif slider_name == 'tempo_fader_1':
+        #     fader = self.tempo_fader_1
+        #     current_pos = fader.y + (1.0 - fader.value) * fader.height
+        #     self.slider_grab_offset = y - current_pos
+        # elif slider_name == 'tempo_fader_2':
+        #     fader = self.tempo_fader_2
+        #     current_pos = fader.y + (1.0 - fader.value) * fader.height
+        #     self.slider_grab_offset = y - current_pos
         
         # Update the slider immediately
         self._update_active_slider(x, y)
@@ -2376,23 +2412,24 @@ class DJController:
             fader.is_dragging = True
             self.audio_engine.set_crossfader_position(crossfader_value)
             
-        elif self.active_slider == 'tempo_fader_1':
-            fader = self.tempo_fader_1
-            adjusted_y = y - self.slider_grab_offset
-            relative_y = (adjusted_y - fader.y) / fader.height
-            fader_value = max(0.0, min(1.0, 1.0 - relative_y))
-            fader.value = fader_value
-            fader.is_dragging = True
-            self.audio_engine.set_tempo(1, fader_value)
-            
-        elif self.active_slider == 'tempo_fader_2':
-            fader = self.tempo_fader_2
-            adjusted_y = y - self.slider_grab_offset
-            relative_y = (adjusted_y - fader.y) / fader.height
-            fader_value = max(0.0, min(1.0, 1.0 - relative_y))
-            fader.value = fader_value
-            fader.is_dragging = True
-            self.audio_engine.set_tempo(2, fader_value)
+        # DISABLED: Tempo fader active slider processing - interaction removed but code preserved
+        # elif self.active_slider == 'tempo_fader_1':
+        #     fader = self.tempo_fader_1
+        #     adjusted_y = y - self.slider_grab_offset
+        #     relative_y = (adjusted_y - fader.y) / fader.height
+        #     fader_value = max(0.0, min(1.0, 1.0 - relative_y))
+        #     fader.value = fader_value
+        #     fader.is_dragging = True
+        #     self.audio_engine.set_tempo(1, fader_value)
+        #     
+        # elif self.active_slider == 'tempo_fader_2':
+        #     fader = self.tempo_fader_2
+        #     adjusted_y = y - self.slider_grab_offset
+        #     relative_y = (adjusted_y - fader.y) / fader.height
+        #     fader_value = max(0.0, min(1.0, 1.0 - relative_y))
+        #     fader.value = fader_value
+        #     fader.is_dragging = True
+        #     self.audio_engine.set_tempo(2, fader_value)
     
     def _release_active_slider(self):
         """Release the currently active slider"""
@@ -2402,10 +2439,11 @@ class DJController:
             self.volume_fader_2.is_dragging = False
         elif self.active_slider == 'crossfader':
             self.crossfader.is_dragging = False
-        elif self.active_slider == 'tempo_fader_1':
-            self.tempo_fader_1.is_dragging = False
-        elif self.active_slider == 'tempo_fader_2':
-            self.tempo_fader_2.is_dragging = False
+        # DISABLED: Tempo fader release processing - interaction removed but code preserved
+        # elif self.active_slider == 'tempo_fader_1':
+        #     self.tempo_fader_1.is_dragging = False
+        # elif self.active_slider == 'tempo_fader_2':
+        #     self.tempo_fader_2.is_dragging = False
             
         self.active_slider = None
         self.slider_grab_offset = 0
@@ -2515,6 +2553,12 @@ class DJController:
         # Update jog wheel visual angle
         jog_wheel.current_angle += angle_diff
         
+        # Update our separate rotation tracking for image rotation
+        if deck == 1:
+            self.deck1_jog_rotation += angle_diff
+        else:
+            self.deck2_jog_rotation += angle_diff
+        
         # Determine behavior based on deck state
         is_playing = self.audio_engine.deck1_is_playing if deck == 1 else self.audio_engine.deck2_is_playing
         
@@ -2570,6 +2614,9 @@ class DJController:
         self.jog_initial_angle = 0.0
         self.jog_last_angle = 0.0
         self.jog_rotation_speed = 0.0
+        
+        # NOTE: Keep deck jog rotation at current position when released
+        # Only reset rotation when cue button is pressed
     
     def update_jog_wheel_spinning(self):
         """Update jog wheel spinning to reflect actual song timeline - like real DJ controllers"""
@@ -2651,138 +2698,106 @@ class DJController:
                 self.jog_wheel_2.current_angle = self.jog_wheel_2.current_angle % 360
             
             self._last_track_positions[2] = current_track_position
-    
+     
+    def _rotate_image(self, image, angle, center):
+        """Rotate an image around its center point"""
+        if image is None:
+            return None
+        
+        # Get rotation matrix
+        rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+        
+        # Apply rotation
+        rotated = cv2.warpAffine(image, rotation_matrix, (image.shape[1], image.shape[0]))
+        return rotated
+ 
     def _draw_professional_jog_wheel(self, overlay, jog_wheel, deck_num, label):
-        """Draw a realistic professional DJ controller jog wheel with all the visual elements"""
+        """Draw jog wheel using UI image with rotation based on interaction"""
         center_x, center_y = jog_wheel.center_x, jog_wheel.center_y
         radius = jog_wheel.radius
         
-        # Determine jog wheel state and colors
+        # Determine jog wheel state
         is_playing = (self.audio_engine.deck1_is_playing if deck_num == 1 
                       else self.audio_engine.deck2_is_playing)
         is_touching = jog_wheel.is_touching
         
-        # Professional color scheme based on state
-        if is_touching:
-            main_color = (255, 215, 0)  # Gold when touched
-            inner_color = (255, 255, 100)  # Bright yellow
-            tick_color = (255, 255, 255)  # White ticks
-            label_color = (255, 255, 255)  # White label
-        elif is_playing:
-            main_color = (100, 255, 100)  # Green when playing
-            inner_color = (150, 255, 150)  # Light green
-            tick_color = (200, 255, 200)  # Light green ticks
-            label_color = (255, 255, 255)  # White label
-        else:
-            main_color = (150, 150, 150)  # Gray when stopped
-            inner_color = (100, 100, 100)  # Dark gray
-            tick_color = (200, 200, 200)  # Light gray ticks
-            label_color = (200, 200, 200)  # Gray label
-        
-        # Draw outer ring (main jog wheel body)
-        cv2.circle(overlay, (center_x, center_y), radius, main_color, 4)
-        
-        # Draw inner ring for depth
-        cv2.circle(overlay, (center_x, center_y), radius - 15, inner_color, 2)
-        
-        # Draw center hub
-        cv2.circle(overlay, (center_x, center_y), 25, main_color, -1)
-        cv2.circle(overlay, (center_x, center_y), 25, (255, 255, 255), 2)
-        
-        # Draw rotation tick marks around circumference (like real jog wheels)
-        num_ticks = 24  # Professional jog wheels often have many tick marks
-        for i in range(num_ticks):
-            # Base angle for this tick mark
-            base_angle = (i * 360 / num_ticks) * np.pi / 180
+        if self.jogwheel_image is not None:
+            # Get current rotation angle (only rotate when manually interacting, not during playback)
+            current_rotation = self.deck1_jog_rotation if deck_num == 1 else self.deck2_jog_rotation
             
-            # Add current rotation to show spinning
-            actual_angle = base_angle + np.radians(jog_wheel.current_angle)
-            
-            # Calculate tick mark positions
-            tick_outer_radius = radius - 5
-            tick_inner_radius = radius - 20
-            
-            # Every 6th tick is longer (like hour marks on a clock)
-            if i % 6 == 0:
-                tick_inner_radius = radius - 30
-                tick_thickness = 3
+            # Only rotate the wheel image when being touched (like real DJ controllers)
+            if is_touching:
+                rotated_image = self._rotate_image(self.jogwheel_image, -current_rotation, (250, 250))
             else:
-                tick_thickness = 1
+                rotated_image = self.jogwheel_image
             
-            # Calculate tick mark coordinates
-            outer_x = int(center_x + tick_outer_radius * np.cos(actual_angle))
-            outer_y = int(center_y + tick_outer_radius * np.sin(actual_angle))
-            inner_x = int(center_x + tick_inner_radius * np.cos(actual_angle))
-            inner_y = int(center_y + tick_inner_radius * np.sin(actual_angle))
-            
-            # Draw the tick mark
-            cv2.line(overlay, (outer_x, outer_y), (inner_x, inner_y), tick_color, tick_thickness)
+            # Draw the jog wheel image
+            if rotated_image is not None:
+                top_left_x = center_x - 250
+                top_left_y = center_y - 250
+                self._draw_jog_wheel_image(overlay, rotated_image, top_left_x, top_left_y)
         
-        # Draw main rotation indicator (like the main hand on a clock)
-        rotation_angle = np.radians(jog_wheel.current_angle)
-        rotation_end_x = int(center_x + (radius - 35) * np.cos(rotation_angle))
-        rotation_end_y = int(center_y + (radius - 35) * np.sin(rotation_angle))
-        cv2.line(overlay, (center_x, center_y), (rotation_end_x, rotation_end_y), 
-                 (255, 255, 255), 4)  # White main indicator
+        # Draw position indicator line (like real DJ controllers - shows playback position)
+        if is_playing:
+            try:
+                position = self.audio_engine.get_playback_position(deck_num)
+                position_angle = position * 2 * np.pi - np.pi/2  # Start from top (12 o'clock)
+                
+                # Draw line from center to edge showing current position
+                line_end_x = int(center_x + 200 * np.cos(position_angle))
+                line_end_y = int(center_y + 200 * np.sin(position_angle))
+                
+                # Position line color
+                pos_color = (255, 255, 255)  # White line
+                cv2.line(overlay, (center_x, center_y), (line_end_x, line_end_y), pos_color, 3)
+                
+                # Draw small dot at the end
+                cv2.circle(overlay, (line_end_x, line_end_y), 5, pos_color, -1)
+                
+            except:
+                pass  # Skip if position can't be determined
         
-        # Draw track position indicator (shows current playback position)
-        try:
-            position = self.audio_engine.get_playback_position(deck_num)
-            position_angle = position * 2 * np.pi - np.pi/2  # Start from top (12 o'clock)
-            pos_radius = radius - 10
-            pos_x = int(center_x + pos_radius * np.cos(position_angle))
-            pos_y = int(center_y + pos_radius * np.sin(position_angle))
-            
-            # Position indicator color based on state
-            if is_playing:
-                pos_color = (0, 255, 255)  # Cyan when playing
-            else:
-                pos_color = (0, 100, 255)  # Blue when stopped
-            
-            # Draw enhanced position indicator
-            cv2.circle(overlay, (pos_x, pos_y), 8, pos_color, -1)
-            cv2.circle(overlay, (pos_x, pos_y), 8, (255, 255, 255), 2)
-            
-            # Draw beat sync indicator if available
-            if hasattr(self, 'visualizer'):
-                waveform_data = (self.visualizer.deck1_waveform if deck_num == 1 
-                               else self.visualizer.deck2_waveform)
-                if waveform_data and len(waveform_data.beat_times) > 0:
-                    # Find the nearest beat
-                    current_time = position * waveform_data.duration
-                    beat_distances = np.abs(waveform_data.beat_times - current_time)
-                    nearest_beat_idx = np.argmin(beat_distances)
-                    beat_distance = beat_distances[nearest_beat_idx]
-                    
-                    # Show beat sync indicator if close to a beat
-                    if beat_distance < 0.1:  # Within 100ms of a beat
-                        beat_ring_color = (0, 255, 255)  # Cyan for beat sync
-                        cv2.circle(overlay, (center_x, center_y), radius - 45, beat_ring_color, 3)
-        except:
-            pass  # Skip if position can't be determined
-        
-        # Draw deck label in center
-        cv2.putText(overlay, label, (center_x - 30, center_y + 5), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, label_color, 2)
-        
-        # Show interaction feedback text above jog wheel
+        # Draw interaction feedback
         if is_touching:
+            # Draw ring around wheel to show interaction
+            ring_color = (255, 215, 0)  # Gold when touched
+            cv2.circle(overlay, (center_x, center_y), radius + 5, ring_color, 4)
+            
             feedback_text = "SCRATCHING" if is_playing else "NAVIGATING"
             text_color = (255, 255, 0)  # Yellow
             cv2.putText(overlay, feedback_text, (center_x - 40, center_y - radius - 20), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
+    
+    def _draw_jog_wheel_image(self, overlay, image, x, y):
+        """Draw jog wheel image with circular mask to remove black background"""
+        if image is None:
+            return
         
-        # Show speed indicator when playing
-        if is_playing and not is_touching:
-            try:
-                tempo_multiplier = self.audio_engine.get_tempo_multiplier(deck_num)
-                if tempo_multiplier != 1.0:
-                    speed_text = f"{tempo_multiplier:.2f}x"
-                    speed_color = (100, 255, 255)  # Cyan
-                    cv2.putText(overlay, speed_text, (center_x - 20, center_y - radius - 20), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, speed_color, 2)
-            except:
-                pass
+        h, w = image.shape[:2]
+        
+        # Ensure we don't go out of bounds
+        if x < 0 or y < 0 or x + w > overlay.shape[1] or y + h > overlay.shape[0]:
+            return
+        
+        # Create circular mask for jog wheel (250px radius for 500px diameter)
+        center = (250, 250)  # Center of the 500x500 image
+        radius = 250
+        
+        # Create coordinate grids
+        y_coords, x_coords = np.ogrid[:h, :w]
+        mask = (x_coords - center[0])**2 + (y_coords - center[1])**2 <= radius**2
+        
+        # Extract BGR channels (ignore alpha since we're masking)
+        if len(image.shape) == 4:
+            bgr = image[:, :, :3]
+        else:
+            bgr = image
+        
+        # Apply circular mask to only draw pixels within the circle
+        overlay_region = overlay[y:y+h, x:x+w]
+        
+        for c in range(3):
+            overlay_region[:, :, c] = np.where(mask, bgr[:, :, c], overlay_region[:, :, c])
     
     def _draw_image_with_alpha(self, overlay, image, x, y):
         """Draw an image with circular mask onto overlay at specified position"""
@@ -2818,18 +2833,40 @@ class DJController:
     def _draw_button_ring(self, overlay, center_x, center_y, radius, color, thickness=4):
         """Draw a colored ring around a circular button"""
         cv2.circle(overlay, (center_x, center_y), radius, color, thickness)
-     
+    
     def _draw_rounded_rectangle(self, overlay, x, y, width, height, radius, color, thickness=-1):
         """Draw a rounded rectangle"""
-        # Draw the main rectangle
+        # Main rectangles
         cv2.rectangle(overlay, (x + radius, y), (x + width - radius, y + height), color, thickness)
         cv2.rectangle(overlay, (x, y + radius), (x + width, y + height - radius), color, thickness)
         
-        # Draw the corners
+        # Corner circles
         cv2.circle(overlay, (x + radius, y + radius), radius, color, thickness)
         cv2.circle(overlay, (x + width - radius, y + radius), radius, color, thickness)
         cv2.circle(overlay, (x + radius, y + height - radius), radius, color, thickness)
         cv2.circle(overlay, (x + width - radius, y + height - radius), radius, color, thickness)
+    
+    def _draw_rounded_border_only(self, overlay, x, y, width, height, radius, color, thickness=2):
+        """Draw only the external border outline of a rounded rectangle"""
+        # Draw the four edge lines (avoiding corners)
+        # Top edge
+        cv2.line(overlay, (x + radius, y), (x + width - radius, y), color, thickness)
+        # Bottom edge  
+        cv2.line(overlay, (x + radius, y + height), (x + width - radius, y + height), color, thickness)
+        # Left edge
+        cv2.line(overlay, (x, y + radius), (x, y + height - radius), color, thickness)
+        # Right edge
+        cv2.line(overlay, (x + width, y + radius), (x + width, y + height - radius), color, thickness)
+        
+        # Draw corner arcs (quarter circles)
+        # Top-left corner
+        cv2.ellipse(overlay, (x + radius, y + radius), (radius, radius), 180, 0, 90, color, thickness)
+        # Top-right corner
+        cv2.ellipse(overlay, (x + width - radius, y + radius), (radius, radius), 270, 0, 90, color, thickness)
+        # Bottom-right corner
+        cv2.ellipse(overlay, (x + width - radius, y + height - radius), (radius, radius), 0, 0, 90, color, thickness)
+        # Bottom-left corner
+        cv2.ellipse(overlay, (x + radius, y + height - radius), (radius, radius), 90, 0, 90, color, thickness)
 
     def draw_controller_overlay(self, frame):
         """Draw the DJ controller overlay on the frame"""
@@ -2877,14 +2914,15 @@ class DJController:
                     if button.is_active or button.is_pressed:
                         self._draw_button_ring(overlay, center_x, center_y, radius, ring_color, 4)
                 else:
-                    # Draw clean square pads - no corners, no outline, no text
+                    # Draw clean rounded pads - 25px corner radius like real DJ controllers
                     pad_color = (34, 34, 34)  # Hex #222222 in BGR
+                    corner_radius = 25
                      
-                    # Draw only filled square rectangle - clean solid pad
-                    cv2.rectangle(overlay, (button.x, button.y), 
-                                (button.x + button.width, button.y + button.height), pad_color, -1)
+                    # Draw filled rounded rectangle - clean solid pad with rounded corners
+                    self._draw_rounded_rectangle(overlay, button.x, button.y, 
+                                               button.width, button.height, corner_radius, pad_color, -1)
                     
-                    # Draw colored border light around button when active/pressed (external square only)
+                    # Draw colored border light around button when active/pressed (external rounded border)
                     if button.is_active or button.is_pressed:
                         ring_color = color
                         if button.is_pressed:
@@ -2892,9 +2930,12 @@ class DJController:
                         elif button.is_active:
                             ring_color = button.active_color
                         
-                        # Draw simple rectangular border (external square only)
-                        cv2.rectangle(overlay, (button.x - 2, button.y - 2), 
-                                    (button.x + button.width + 2, button.y + button.height + 2), ring_color, 4)
+                        # Draw external border outline only (clean border around the outside)
+                        border_thickness = 4
+                        border_offset = border_thickness // 2
+                        self._draw_rounded_border_only(overlay, button.x - border_offset, button.y - border_offset, 
+                                                     button.width + border_thickness, button.height + border_thickness, 
+                                                     corner_radius, ring_color, border_thickness)
         
         # Draw center controls (effects, etc.)
         center_x = self.screen_width // 2
