@@ -301,19 +301,19 @@ class RekordboxStyleVisualizer:
             
     def draw_stacked_visualization(self, overlay, audio_engine):
         """Draw professional Rekordbox-style stacked track visualization"""
-        # Calculate professional layout with wider visualization for better timeline view
-        margin = 60  # Reduced margins for more waveform space
+        # Calculate compact layout with minimal dead space
+        margin = 10  # Minimal margins for compact view
         viz_width = self.screen_width - (2 * margin)
         viz_start_x = margin
         center_x = self.screen_width // 2
         
-        # Calculate total visualization area height
-        total_viz_height = (self.track_height * 2) + self.track_spacing + 60  # Extra for labels
-        viz_start_y = 40  # Start from top
+        # Calculate minimal visualization area height
+        total_viz_height = (self.track_height * 2) + self.track_spacing + 20  # Minimal space for tracks
+        viz_start_y = 10  # Minimal top margin
         
-        # Draw clean background panel for the entire visualization area
-        bg_rect = (viz_start_x - 10, viz_start_y - 20, 
-                   viz_width + 20, total_viz_height + 40)
+        # Draw compact background panel
+        bg_rect = (viz_start_x - 5, viz_start_y - 5, 
+                   viz_width + 10, total_viz_height + 10)
         cv2.rectangle(overlay, (bg_rect[0], bg_rect[1]), 
                      (bg_rect[0] + bg_rect[2], bg_rect[1] + bg_rect[3]), 
                      self.bg_color, -1)
@@ -323,8 +323,14 @@ class RekordboxStyleVisualizer:
                      (bg_rect[0] + bg_rect[2], bg_rect[1] + bg_rect[3]), 
                      (50, 50, 50), 1)
         
-        # Draw Deck 1 (top)
+        # Draw Deck 1 (top) with container border for height verification
         deck1_y = viz_start_y
+        
+        # Draw track container border for Deck 1 (visual height confirmation)
+        cv2.rectangle(overlay, (viz_start_x, deck1_y), 
+                     (viz_start_x + viz_width, deck1_y + self.track_height), 
+                     (40, 40, 40), 1)
+        
         self._draw_deck_visualization(
             overlay, 1, viz_start_x, deck1_y, viz_width, center_x,
             self.deck1_waveform, audio_engine
@@ -335,8 +341,14 @@ class RekordboxStyleVisualizer:
         cv2.line(overlay, (viz_start_x, separator_y), 
                 (viz_start_x + viz_width, separator_y), (60, 60, 60), 1)
         
-        # Draw Deck 2 (bottom)
+        # Draw Deck 2 (bottom) with container border for height verification
         deck2_y = deck1_y + self.track_height + self.track_spacing
+        
+        # Draw track container border for Deck 2 (visual height confirmation)
+        cv2.rectangle(overlay, (viz_start_x, deck2_y), 
+                     (viz_start_x + viz_width, deck2_y + self.track_height), 
+                     (40, 40, 40), 1)
+        
         self._draw_deck_visualization(
             overlay, 2, viz_start_x, deck2_y, viz_width, center_x,
             self.deck2_waveform, audio_engine
@@ -398,20 +410,20 @@ class RekordboxStyleVisualizer:
                                       waveform_data, current_time_sec, tempo_multiplier)
 
         # --- Draw Professional Track Info ---
-        # Track name (top left)
+        # Track name (top left) - positioned inside track container
         truncated_name = track_name[:35] + "..." if len(track_name) > 35 else track_name
-        cv2.putText(overlay, f"DECK {deck_num}: {truncated_name}", (x + 5, y - 8),
+        cv2.putText(overlay, f"DECK {deck_num}: {truncated_name}", (x + 5, y + 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.text_color, 1)
         
         # BPM display removed for cleaner visualization
         
-        # Time position display (bottom right)
+        # Time position display (bottom right) - positioned inside track container
         minutes = int(current_time_sec // 60)
         seconds = int(current_time_sec % 60)
         time_text = f"{minutes:02d}:{seconds:02d}"
         time_size = cv2.getTextSize(time_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
         time_x = x + width - time_size[0] - 10
-        cv2.putText(overlay, time_text, (time_x, y + self.track_height - 5),
+        cv2.putText(overlay, time_text, (time_x, y + self.track_height - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.text_color, 1)
         
         # Play/pause indicator removed for cleaner visualization
@@ -2033,8 +2045,8 @@ class DJController:
     
     def create_track_visualization_window(self):
         """Create separate window for track visualization with same width as webcam window"""
-        # Create blank image with same width as main window, height for visualization
-        viz_height = 400  # Sufficient height for stacked visualization
+        # Create compact image with minimal height for visualization
+        viz_height = 240  # Compact height matching actual content needs
         viz_frame = np.zeros((viz_height, self.screen_width, 3), dtype=np.uint8)
         
         # Draw the visualization on this frame
@@ -3174,29 +3186,29 @@ class DJController:
     def load_default_tracks(self):
         """Load default tracks into both decks with easy song selection"""
         
-        levels = "[fadr.com] Stems - Avicii - Levels (Lyrics)"
-        no_broke_boys = "[fadr.com] Stems - Disco Lines & Tinashe - No Broke Boys (Official Audio)"
-        calabria = "[fadr.com] Stems - Calabria 2007 With LYRICS [IiX8yqDVWSU]"
-        sprinter = "[fadr.com] Stems - Central Cee x Dave - Sprinter (Lyrics)"
-        victory_lap = "[fadr.com] Stems - Fred again.. x Skepta x PlaqueBoyMax - Victory Lap (Lyrics)"
-        golden = "[fadr.com] Stems - Huntrix - Golden (Lyrics) KPop Demon Hunters [htk6MRjmcnQ]"
-        i_love_it = "[fadr.com] Stems - Icona Pop - I Love It (Feat. Charli XCX)  [Audio]"
-        die_young = "[fadr.com] Stems - Kesha - Die Young (Lyrics)"
-        no_hands = "[fadr.com] Stems - Waka Flocka Flame - No Hands (feat. Roscoe Dash and Wale)  Lyrics"
-        sushi_dont_lie = "[fadr.com] Stems - 揽佬 SKAI ISYOURGOD八方来财因果Official Music Video"
-        sexy_bitch = "[fadr.com] Stems - David Guetta - Sexy Bitch (feat. Akon)  Lyrics"
-        heads_will_roll = "[fadr.com] Stems - Heads Will Roll (A-Trak Remix Radio Edit)"
-        fukumean = "[fadr.com] Stems - Gunna - fukumean [Official Visualizer]"
-        no_pole = "[fadr.com] Stems - Don Toliver - No Pole (Lyrics)"
-        mcdonalds = "[fadr.com] Stems - POV_ You're at McDonald's"
-        shotta_flow = "[fadr.com] Stems - NLE Choppa - Shotta Flow (Lyrics)"
-        last_friday_night = "[fadr.com] Stems - Katy Perry - Last Friday Night (T.G.I.F) (Lyrics)"
-        newjeans = "[fadr.com] Stems - NewJeans 'New Jeans (ft. The Powerpuff Girls)' Lyrics (뉴진스 New Jeans 가사) (Color Coded Lyrics)"
-        clarity = "[fadr.com] Stems - Zedd feat. Foxes - Clarity (Lyrics)"
-        long_time = "[fadr.com] Stems - Long Time (Intro)"
+        levels = "Avicii - Levels"
+        no_broke_boys = "Disco Lines & Tinashe - No Broke Boys"
+        calabria = "Calabria 2007"
+        sprinter = "Central Cee x Dave - Sprinter"
+        victory_lap = "Fred again.. x Skepta x PlaqueBoyMax - Victory Lap"
+        golden = "Huntrix - Golden KPop Demon Hunters"
+        i_love_it = "Icona Pop - I Love It (Feat. Charli XCX)"
+        die_young = "Kesha - Die Young"
+        no_hands = "Waka Flocka Flame - No Hands (feat. Roscoe Dash and Wale)"
+        sushi_dont_lie = "揽佬 SKAI ISYOURGOD八方来财因果"
+        sexy_bitch = "David Guetta - Sexy Bitch (feat. Akon)"
+        heads_will_roll = "Heads Will Roll (A-Trak Remix Radio Edit)"
+        fukumean = "Gunna - fukumean"
+        no_pole = "Don Toliver - No Pole"
+        mcdonalds = "POV_ You're at McDonald's"
+        shotta_flow = "NLE Choppa - Shotta Flow"
+        last_friday_night = "Katy Perry - Last Friday Night (T.G.I.F)"
+        newjeans = "NewJeans 'New Jeans (ft. The Powerpuff Girls)' (뉴진스 New Jeans 가사)"
+        clarity = "Zedd feat. Foxes - Clarity"
+        long_time = "Long Time (Intro)"
         
-        DECK1_SONG = no_hands
-        DECK2_SONG = fukumean  
+        DECK1_SONG = die_young
+        DECK2_SONG = levels  
         
         # Scan available tracks
         self.track_loader.scan_tracks()
