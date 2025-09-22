@@ -1765,10 +1765,9 @@ class DJController:
         self.jog_wheel_1 = JogWheel("jog1", jog_wheel_center_x_left, jog_wheel_center_y, 250)
         self.jog_wheel_2 = JogWheel("jog2", jog_wheel_center_x_right, jog_wheel_center_y, 250)
         
-        # Calculate positions for circular buttons at bottom corners
-        # Play/pause at bottom corners: 100px from edges + 75px radius = 175px from edge centers
-        play_pause_center_x_left = 100 + 75  # 175px from left edge
-        play_pause_center_x_right = self.screen_width - 100 - 75  # 175px from right edge
+        # Calculate positions for circular buttons - 200px from side borders (50px closer to center)
+        play_pause_center_x_left = 200  # 200px from left edge
+        play_pause_center_x_right = self.screen_width - 200  # 200px from right edge
         play_pause_center_y = self.screen_height - 100 - 75  # 175px from bottom edge
         
         # Cue buttons 20px above play/pause (center-to-center distance = 20 + 75 + 75 = 170px)
@@ -1777,45 +1776,64 @@ class DJController:
         # Convert to ControllerButton coordinates (top-left corner for compatibility)
         # For 150px diameter circles, we store center as x,y and use width/height as diameter
         
-        # Calculate positions for vocal/instrumental pads at bottom border
-        # Play/pause button edges: left at 250px, right at screen_width-250px
-        # 60px gap from play/pause buttons going inward
-        # 180x180px pads with 20px separation
-        pad_size = 180
-        pad_y = self.screen_height - 100 - pad_size  # At 100px bottom border
+        # Calculate positions for 2x2 pad grids - 150x150px pads with 20px separation
+        # 40px gap from button edges, 100px from bottom border
+        pad_size = 150
+        pad_separation = 20
         
-        # Left side (Deck 1): vocal then instrumental going inward
-        left_vocal_x = 250 + 60  # 310px from left edge
-        left_instrumental_x = left_vocal_x + pad_size + 20  # 510px from left edge
+        # Grid dimensions: 2x2 with 150px pads and 20px separation
+        grid_width = pad_size + pad_separation + pad_size  # 320px
+        grid_height = pad_size + pad_separation + pad_size  # 320px
         
-        # Right side (Deck 2): instrumental then vocal going inward  
-        right_instrumental_x = self.screen_width - 250 - 60 - pad_size  # screen_width - 490px
-        right_vocal_x = right_instrumental_x - 20 - pad_size  # screen_width - 690px
+        # Bottom row y-position (100px from bottom)
+        bottom_pad_y = self.screen_height - 100 - pad_size
+        # Top row y-position
+        top_pad_y = bottom_pad_y - pad_separation - pad_size
         
-        # Buttons for Deck 1 (left side) - circular buttons at bottom corner + square pads
+        # Left deck grid (40px from right edge of left play button going inward)
+        # Left play button right edge is at 200 + 75 = 275px
+        left_grid_x = 275 + 40  # 315px from left edge
+        left_col1_x = left_grid_x
+        left_col2_x = left_grid_x + pad_size + pad_separation
+        
+        # Right deck grid (40px from left edge of right play button going inward)
+        # Right play button left edge is at screen_width - 200 - 75 = screen_width - 275px
+        right_grid_end_x = self.screen_width - 275 - 40  # screen_width - 315px
+        right_col2_x = right_grid_end_x - pad_size
+        right_col1_x = right_col2_x - pad_separation - pad_size
+        
+        # Buttons for Deck 1 (left side) - circular buttons + 2x2 pad grid
         self.deck1_buttons = {
             "cue": ControllerButton("Cue", play_pause_center_x_left - 75, cue_center_y - 75, 150, 150, button_type="momentary"),
             "play_pause": ControllerButton("Play/Pause", play_pause_center_x_left - 75, play_pause_center_y - 75, 150, 150, button_type="toggle"),
-            "vocal": ControllerButton("Vocal", left_vocal_x, pad_y, pad_size, pad_size, button_type="toggle"),
-            "instrumental": ControllerButton("Instrumental", left_instrumental_x, pad_y, pad_size, pad_size, button_type="toggle")
+            # Bottom row (clickable)
+            "vocal": ControllerButton("Vocal", left_col1_x, bottom_pad_y, pad_size, pad_size, button_type="toggle"),
+            "instrumental": ControllerButton("Instrumental", left_col2_x, bottom_pad_y, pad_size, pad_size, button_type="toggle"),
+            # Top row (non-clickable, just for show)
+            "pad_top_left": ControllerButton("PAD 1", left_col1_x, top_pad_y, pad_size, pad_size, button_type="display"),
+            "pad_top_right": ControllerButton("PAD 2", left_col2_x, top_pad_y, pad_size, pad_size, button_type="display")
         }
         
-        # Buttons for Deck 2 (right side) - circular buttons at bottom corner + square pads
+        # Buttons for Deck 2 (right side) - circular buttons + 2x2 pad grid
         self.deck2_buttons = {
             "cue": ControllerButton("Cue", play_pause_center_x_right - 75, cue_center_y - 75, 150, 150, button_type="momentary"),
             "play_pause": ControllerButton("Play/Pause", play_pause_center_x_right - 75, play_pause_center_y - 75, 150, 150, button_type="toggle"),
-            "vocal": ControllerButton("Vocal", right_vocal_x, pad_y, pad_size, pad_size, button_type="toggle"),
-            "instrumental": ControllerButton("Instrumental", right_instrumental_x, pad_y, pad_size, pad_size, button_type="toggle")
+            # Bottom row (clickable) - switched to match left side
+            "vocal": ControllerButton("Vocal", right_col1_x, bottom_pad_y, pad_size, pad_size, button_type="toggle"),
+            "instrumental": ControllerButton("Instrumental", right_col2_x, bottom_pad_y, pad_size, pad_size, button_type="toggle"),
+            # Top row (non-clickable, just for show)
+            "pad_top_left": ControllerButton("PAD 3", right_col1_x, top_pad_y, pad_size, pad_size, button_type="display"),
+            "pad_top_right": ControllerButton("PAD 4", right_col2_x, top_pad_y, pad_size, pad_size, button_type="display")
         }
         
         # Center controls (crossfader only, no effects)
         self.center_buttons = {}
         
         # Calculate slider positions: aligned with inner edges of performance pads for better symmetry
-        # Left deck: align to right edge of instrumental pad (690px)
-        # Right deck: align to left edge of vocal pad (screen_width - 690px - slider_width)
-        tempo_slider_x_left = left_instrumental_x + pad_size  # 510 + 180 = 690px (right edge of left instrumental pad)
-        tempo_slider_x_right = right_vocal_x - 30  # screen_width - 690px - 30px (left edge of right vocal pad minus slider width)
+        # Left deck: align to right edge of right column (instrumental pad)
+        # Right deck: align to left edge of right column (vocal pad) minus slider width
+        tempo_slider_x_left = left_col2_x + pad_size  # Right edge of left deck's right column
+        tempo_slider_x_right = right_col2_x - 30  # Left edge of right deck's right column minus slider width
         tempo_y = 100  # At top 100px border
         volume_y = tempo_y + 280 + 100  # 100px below tempo sliders (tempo_y + tempo_height + gap)
         
@@ -1823,9 +1841,13 @@ class DJController:
         self.tempo_fader_1 = Fader("Tempo1", tempo_slider_x_left, tempo_y, 30, 280, value=0.5)
         self.tempo_fader_2 = Fader("Tempo2", tempo_slider_x_right, tempo_y, 30, 280, value=0.5)
         
-        # Volume faders - aligned with tempo sliders and inner pad edges, 100px below
-        self.volume_fader_1 = Fader("Vol1", tempo_slider_x_left, volume_y, 30, 280, value=1.0)  # 100% volume
-        self.volume_fader_2 = Fader("Vol2", tempo_slider_x_right, volume_y, 30, 280, value=1.0)   # 100% volume
+        # Volume faders - middle point aligned with top of upper pads, 100px to the sides of jog wheels
+        volume_fader_x_left = jog_wheel_center_x_left + 250 + 100  # 100px to the right of left jog wheel
+        volume_fader_x_right = jog_wheel_center_x_right - 250 - 100 - 30  # 100px to the left of right jog wheel (minus slider width)
+        volume_fader_y = top_pad_y - 140  # Middle point aligned with top of upper pads (slider height/2 = 140px)
+        
+        self.volume_fader_1 = Fader("Vol1", volume_fader_x_left, volume_fader_y, 30, 280, value=1.0)  # 100% volume
+        self.volume_fader_2 = Fader("Vol2", volume_fader_x_right, volume_fader_y, 30, 280, value=1.0)   # 100% volume
         
         # Crossfader - 400px wide, centered horizontally, aligned with performance pads
         # Position at center of performance pads (screen_height - 190px = pad center)
@@ -1900,6 +1922,10 @@ class DJController:
     
     def check_button_collision(self, x: int, y: int, button: ControllerButton) -> bool:
         """Check if coordinates collide with button - supports both circular and rectangular buttons"""
+        # Skip display-only buttons (non-clickable)
+        if button.button_type == "display":
+            return False
+            
         if button.name in ["Cue", "Play/Pause"]:
             # Circular collision detection for cue and play/pause buttons
             # Button x,y represents top-left, so center is at x + radius, y + radius
@@ -1914,6 +1940,10 @@ class DJController:
     
     def check_button_collision_expanded(self, x: int, y: int, button: ControllerButton) -> bool:
         """Check if coordinates collide with button using expanded hit area for better reliability"""
+        # Skip display-only buttons (non-clickable)
+        if button.button_type == "display":
+            return False
+            
         if button.name in ["Cue", "Play/Pause"]:
             # Expanded circular collision detection for cue and play/pause buttons
             center_x = button.x + 75  # radius = 75px for 150px diameter
@@ -2788,6 +2818,18 @@ class DJController:
     def _draw_button_ring(self, overlay, center_x, center_y, radius, color, thickness=4):
         """Draw a colored ring around a circular button"""
         cv2.circle(overlay, (center_x, center_y), radius, color, thickness)
+     
+    def _draw_rounded_rectangle(self, overlay, x, y, width, height, radius, color, thickness=-1):
+        """Draw a rounded rectangle"""
+        # Draw the main rectangle
+        cv2.rectangle(overlay, (x + radius, y), (x + width - radius, y + height), color, thickness)
+        cv2.rectangle(overlay, (x, y + radius), (x + width, y + height - radius), color, thickness)
+        
+        # Draw the corners
+        cv2.circle(overlay, (x + radius, y + radius), radius, color, thickness)
+        cv2.circle(overlay, (x + width - radius, y + radius), radius, color, thickness)
+        cv2.circle(overlay, (x + radius, y + height - radius), radius, color, thickness)
+        cv2.circle(overlay, (x + width - radius, y + height - radius), radius, color, thickness)
 
     def draw_controller_overlay(self, frame):
         """Draw the DJ controller overlay on the frame"""
@@ -2835,18 +2877,24 @@ class DJController:
                     if button.is_active or button.is_pressed:
                         self._draw_button_ring(overlay, center_x, center_y, radius, ring_color, 4)
                 else:
-                    # Draw rectangular buttons for vocal/instrumental
+                    # Draw clean square pads - no corners, no outline, no text
+                    pad_color = (34, 34, 34)  # Hex #222222 in BGR
+                     
+                    # Draw only filled square rectangle - clean solid pad
                     cv2.rectangle(overlay, (button.x, button.y), 
-                                (button.x + button.width, button.y + button.height), color, -1)
-                    cv2.rectangle(overlay, (button.x, button.y), 
-                                (button.x + button.width, button.y + button.height), (255, 255, 255), 2)
+                                (button.x + button.width, button.y + button.height), pad_color, -1)
                     
-                    # Button text - centered in rectangle (especially important for large 180px pads)
-                    text_size = cv2.getTextSize(button.name, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                    text_x = button.x + (button.width - text_size[0]) // 2
-                    text_y = button.y + (button.height + text_size[1]) // 2
-                    cv2.putText(overlay, button.name, (text_x, text_y), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, button.text_color, 2)
+                    # Draw colored border light around button when active/pressed (external square only)
+                    if button.is_active or button.is_pressed:
+                        ring_color = color
+                        if button.is_pressed:
+                            ring_color = (255, 255, 100)  # Highlight when pressed
+                        elif button.is_active:
+                            ring_color = button.active_color
+                        
+                        # Draw simple rectangular border (external square only)
+                        cv2.rectangle(overlay, (button.x - 2, button.y - 2), 
+                                    (button.x + button.width + 2, button.y + button.height + 2), ring_color, 4)
         
         # Draw center controls (effects, etc.)
         center_x = self.screen_width // 2
@@ -2860,149 +2908,113 @@ class DJController:
         
         # Volume faders with professional-style visualization
         for i, fader in enumerate([self.volume_fader_1, self.volume_fader_2]):
-            deck_num = i + 1
+            # Consistent track width (12px wide)
+            track_x = fader.x + 9
+            track_width = 12
             
-            # Fader track (background)
-            cv2.rectangle(overlay, (fader.x, fader.y), 
-                         (fader.x + fader.width, fader.y + fader.height), (60, 60, 60), -1)
-            cv2.rectangle(overlay, (fader.x, fader.y), 
-                         (fader.x + fader.width, fader.y + fader.height), (200, 200, 200), 2)
+            # Fader track - #222222 with light grey contour
+            cv2.rectangle(overlay, (track_x, fader.y), 
+                         (track_x + track_width, fader.y + fader.height), (34, 34, 34), -1)  # #222222
+            cv2.rectangle(overlay, (track_x, fader.y), 
+                         (track_x + track_width, fader.y + fader.height), (180, 180, 180), 1)  # Light grey contour
             
-            # Volume level indicator (filled portion)
-            fill_height = int(fader.height * fader.value)
-            fill_y = fader.y + fader.height - fill_height
-            if fill_height > 0:
-                # Color based on volume level (green for normal, yellow for high, red for max)
-                if fader.value < 0.7:
-                    color = (0, 200, 0)  # Green
-                elif fader.value < 0.9:
-                    color = (0, 200, 200)  # Yellow
-                else:
-                    color = (0, 100, 255)  # Red (near max)
-                
-                cv2.rectangle(overlay, (fader.x + 2, fill_y), 
-                             (fader.x + fader.width - 2, fader.y + fader.height - 2), color, -1)
+            # Middle indicator line
+            middle_y = fader.y + fader.height // 2
+            cv2.line(overlay, (track_x - 3, middle_y), (track_x + track_width + 3, middle_y), (180, 180, 180), 2)
             
-            # Fader handle
+            # Longer, thicker handle
             handle_y = int(fader.y + fader.height * (1 - fader.value))
-            handle_color = (255, 255, 100) if fader.is_dragging else (255, 255, 255)
-            cv2.rectangle(overlay, (fader.x - 8, handle_y - 12), 
-                         (fader.x + fader.width + 8, handle_y + 12), handle_color, -1)
-            cv2.rectangle(overlay, (fader.x - 8, handle_y - 12), 
-                         (fader.x + fader.width + 8, handle_y + 12), (0, 0, 0), 2)
+            handle_x = fader.x - 8
+            handle_width = 46
+            handle_height = 30  # Made longer
             
-            # Volume percentage label
-            vol_percent = int(fader.value * 100)
-            label_x = fader.x + fader.width + 15
-            label_y = handle_y + 5
-            cv2.putText(overlay, f"{vol_percent}%", (label_x, label_y), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-            
-            # Deck label
-            cv2.putText(overlay, f"VOL{deck_num}", (fader.x - 5, fader.y - 10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            # White handle (no color changes, no text)
+            cv2.rectangle(overlay, (handle_x, handle_y - handle_height//2), 
+                         (handle_x + handle_width, handle_y + handle_height//2), (255, 255, 255), -1)
+            cv2.rectangle(overlay, (handle_x, handle_y - handle_height//2), 
+                         (handle_x + handle_width, handle_y + handle_height//2), (150, 150, 150), 2)
         
-        # Crossfader - Professional DJ controller style
+        # Crossfader - clean minimal style
         cf_rect = (self.crossfader.x, self.crossfader.y, self.crossfader.width, self.crossfader.height)
-        
-        # Crossfader track background
-        cv2.rectangle(overlay, (cf_rect[0], cf_rect[1]), 
-                     (cf_rect[0] + cf_rect[2], cf_rect[1] + cf_rect[3]), (60, 60, 60), -1)
-        
-        # Crossfader position indicators
         cf_pos = self.crossfader.value
         
-        # Color coding for crossfader position
-        if cf_pos <= 0.1:
-            # Full Deck 1
-            track_color = (0, 100, 255)  # Blue for Deck 1
-            pos_text = "DECK 1"
-        elif cf_pos >= 0.9:
-            # Full Deck 2  
-            track_color = (255, 100, 0)  # Orange for Deck 2
-            pos_text = "DECK 2"
-        else:
-            # Mixed
-            track_color = (150, 0, 255)  # Purple for mix
-            pos_text = f"MIX {int(cf_pos*100)}%"
+        # Consistent track thickness (12px tall)
+        track_y = cf_rect[1] + 9
+        track_height = 12
         
-        # Draw crossfader track with position color
-        cv2.rectangle(overlay, (cf_rect[0], cf_rect[1]), 
-                     (cf_rect[0] + cf_rect[2], cf_rect[1] + cf_rect[3]), track_color, 2)
+        # Crossfader track - #222222 with light grey contour
+        cv2.rectangle(overlay, (cf_rect[0], track_y), 
+                     (cf_rect[0] + cf_rect[2], track_y + track_height), (34, 34, 34), -1)  # #222222
+        cv2.rectangle(overlay, (cf_rect[0], track_y), 
+                     (cf_rect[0] + cf_rect[2], track_y + track_height), (180, 180, 180), 1)  # Light grey contour
         
-        # Crossfader labels
-        cv2.putText(overlay, "A", (cf_rect[0] - 15, cf_rect[1] + cf_rect[3] + 20), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 100, 255), 2)  # Deck 1 label
-        cv2.putText(overlay, "B", (cf_rect[0] + cf_rect[2] + 5, cf_rect[1] + cf_rect[3] + 20), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 100, 0), 2)  # Deck 2 label
+        # Middle indicator line
+        middle_x = cf_rect[0] + cf_rect[2] // 2
+        cv2.line(overlay, (middle_x, track_y - 3), (middle_x, track_y + track_height + 3), (180, 180, 180), 2)
         
-        # Crossfader handle
+        # Longer, thicker handle
         handle_x = int(cf_rect[0] + cf_rect[2] * cf_pos)
-        handle_color = (255, 255, 255) if not self.crossfader.is_dragging else (255, 255, 0)
-        cv2.rectangle(overlay, (handle_x - 8, cf_rect[1] - 3), 
-                     (handle_x + 8, cf_rect[1] + cf_rect[3] + 3), handle_color, -1)
+        handle_width = 35  # Made longer
+        handle_height = 50  # Made longer
         
-        # Center position indicator
-        center_x = cf_rect[0] + cf_rect[2] // 2
-        cv2.line(overlay, (center_x, cf_rect[1] - 5), (center_x, cf_rect[1] + cf_rect[3] + 5), 
-                (200, 200, 200), 1)
+        # White handle (no color changes, no text)
+        cv2.rectangle(overlay, (handle_x - handle_width//2, cf_rect[1] - 10), 
+                     (handle_x + handle_width//2, cf_rect[1] + cf_rect[3] + 10), (255, 255, 255), -1)
+        cv2.rectangle(overlay, (handle_x - handle_width//2, cf_rect[1] - 10), 
+                     (handle_x + handle_width//2, cf_rect[1] + cf_rect[3] + 10), (150, 150, 150), 2)
         
-        # Crossfader position text
-        cv2.putText(overlay, pos_text, (cf_rect[0] + 30, cf_rect[1] - 15), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, track_color, 1)
-        
-        # Tempo controls - Professional DJ style
-        for fader, side in [(self.tempo_fader_1, "left"), (self.tempo_fader_2, "right")]:
-            deck_num = 1 if side == "left" else 2
-            
-            # Tempo fader background
-            fader_color = (60, 60, 60)
-            if fader.is_dragging:
-                fader_color = (80, 80, 60)  # Slightly yellow when active
-            
-            cv2.rectangle(overlay, (fader.x, fader.y), 
-                         (fader.x + fader.width, fader.y + fader.height), fader_color, -1)
-            
-            # Tempo fader border
-            cv2.rectangle(overlay, (fader.x, fader.y), 
-                         (fader.x + fader.width, fader.y + fader.height), (150, 150, 150), 2)
-            
-            # Center line (normal tempo)
-            center_y = fader.y + fader.height // 2
-            cv2.line(overlay, (fader.x, center_y), (fader.x + fader.width, center_y), 
-                    (200, 200, 200), 1)
-            
-            # Tempo handle
-            handle_y = int(fader.y + fader.height * (1 - fader.value))
-            handle_color = (255, 255, 255) if not fader.is_dragging else (255, 255, 0)
-            cv2.rectangle(overlay, (fader.x - 3, handle_y - 8), 
-                         (fader.x + fader.width + 3, handle_y + 8), handle_color, -1)
-            
-            # Tempo value and BPM display
-            tempo_percent = self.audio_engine.get_tempo_percentage(deck_num)
-            current_bpm = self.audio_engine.get_current_bpm(deck_num)
-            
-            # Tempo percentage
-            tempo_text = f"{tempo_percent:+.1f}%"
-            if abs(tempo_percent) < 0.1:
-                tempo_text = "0.0%"
-                tempo_color = (0, 255, 0)  # Green for normal speed
-            elif tempo_percent > 0:
-                tempo_color = (0, 100, 255)  # Blue for faster
-            else:
-                tempo_color = (255, 100, 0)  # Orange for slower
-            
-            cv2.putText(overlay, tempo_text, (fader.x - 25, fader.y - 25), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, tempo_color, 1)
-            
-            # Current BPM
-            bpm_text = f"{current_bpm:.1f}"
-            cv2.putText(overlay, bpm_text, (fader.x - 15, fader.y - 10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-            
-            # Label
-            cv2.putText(overlay, f"TEMPO{deck_num}", (fader.x - 30, fader.y + fader.height + 15), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        # Tempo controls - Hidden but functionality maintained (might bring back later)
+        # for fader, side in [(self.tempo_fader_1, "left"), (self.tempo_fader_2, "right")]:
+        #     deck_num = 1 if side == "left" else 2
+        #     
+        #     # Tempo fader background
+        #     fader_color = (60, 60, 60)
+        #     if fader.is_dragging:
+        #         fader_color = (80, 80, 60)  # Slightly yellow when active
+        #     
+        #     cv2.rectangle(overlay, (fader.x, fader.y), 
+        #                  (fader.x + fader.width, fader.y + fader.height), fader_color, -1)
+        #     
+        #     # Tempo fader border
+        #     cv2.rectangle(overlay, (fader.x, fader.y), 
+        #                  (fader.x + fader.width, fader.y + fader.height), (150, 150, 150), 2)
+        #     
+        #     # Center line (normal tempo)
+        #     center_y = fader.y + fader.height // 2
+        #     cv2.line(overlay, (fader.x, center_y), (fader.x + fader.width, center_y), 
+        #             (200, 200, 200), 1)
+        #     
+        #     # Tempo handle
+        #     handle_y = int(fader.y + fader.height * (1 - fader.value))
+        #     handle_color = (255, 255, 255) if not fader.is_dragging else (255, 255, 0)
+        #     cv2.rectangle(overlay, (fader.x - 3, handle_y - 8), 
+        #                  (fader.x + fader.width + 3, handle_y + 8), handle_color, -1)
+        #     
+        #     # Tempo value and BPM display
+        #     tempo_percent = self.audio_engine.get_tempo_percentage(deck_num)
+        #     current_bpm = self.audio_engine.get_current_bpm(deck_num)
+        #     
+        #     # Tempo percentage
+        #     tempo_text = f"{tempo_percent:+.1f}%"
+        #     if abs(tempo_percent) < 0.1:
+        #         tempo_text = "0.0%"
+        #         tempo_color = (0, 255, 0)  # Green for normal speed
+        #     elif tempo_percent > 0:
+        #         tempo_color = (0, 100, 255)  # Blue for faster
+        #     else:
+        #         tempo_color = (255, 100, 0)  # Orange for slower
+        #     
+        #     cv2.putText(overlay, tempo_text, (fader.x - 25, fader.y - 25), 
+        #                cv2.FONT_HERSHEY_SIMPLEX, 0.4, tempo_color, 1)
+        #     
+        #     # Current BPM
+        #     bmp_text = f"{current_bpm:.1f}"
+        #     cv2.putText(overlay, bmp_text, (fader.x - 15, fader.y - 10), 
+        #                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+        #     
+        #     # Label
+        #     cv2.putText(overlay, f"TEMPO{deck_num}", (fader.x - 30, fader.y + fader.height + 15), 
+        #                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
         # EQ knobs removed for cleaner interface
         
