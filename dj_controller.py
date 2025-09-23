@@ -3207,8 +3207,8 @@ class DJController:
         clarity = "Zedd feat. Foxes - Clarity"
         long_time = "Long Time (Intro)"
         
-        DECK1_SONG = die_young
-        DECK2_SONG = levels  
+        DECK1_SONG = no_broke_boys
+        DECK2_SONG = no_broke_boys  
         
         # Scan available tracks
         self.track_loader.scan_tracks()
