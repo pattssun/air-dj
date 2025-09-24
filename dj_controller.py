@@ -1820,19 +1820,10 @@ class DJController:
         self.jog_wheel_1 = JogWheel("jog1", jog_wheel_center_x_left, jog_wheel_center_y, 250)
         self.jog_wheel_2 = JogWheel("jog2", jog_wheel_center_x_right, jog_wheel_center_y, 250)
         
-        # Calculate positions for circular buttons - 200px from side borders (50px closer to center)
-        play_pause_center_x_left = 200  # 200px from left edge
-        play_pause_center_x_right = self.screen_width - 200  # 200px from right edge
-        play_pause_center_y = self.screen_height - 100 - 75  # 175px from bottom edge
-        
-        # Cue buttons 20px above play/pause (center-to-center distance = 20 + 75 + 75 = 170px)
-        cue_center_y = play_pause_center_y - 170
-        
-        # Convert to ControllerButton coordinates (top-left corner for compatibility)
-        # For 150px diameter circles, we store center as x,y and use width/height as diameter
+        # SWAPPED LAYOUT: Pads closer to edges, cue/play buttons closer to center
         
         # Calculate positions for 2x2 pad grids - 150x150px pads with 20px separation
-        # 40px gap from button edges, 100px from bottom border
+        # Pads now positioned closer to screen edges
         pad_size = 150
         pad_separation = 20
         
@@ -1845,40 +1836,48 @@ class DJController:
         # Top row y-position
         top_pad_y = bottom_pad_y - pad_separation - pad_size
         
-        # Left deck grid (40px from right edge of left play button going inward)
-        # Left play button right edge is at 200 + 75 = 275px
-        left_grid_x = 275 + 40  # 315px from left edge
-        left_col1_x = left_grid_x
-        left_col2_x = left_grid_x + pad_size + pad_separation
+        # Adjusted positions: cue/play buttons 100px towards edges, pads 20px towards center
         
-        # Right deck grid (40px from left edge of right play button going inward)
-        # Right play button left edge is at screen_width - 200 - 75 = screen_width - 275px
-        right_grid_end_x = self.screen_width - 275 - 40  # screen_width - 315px
-        right_col2_x = right_grid_end_x - pad_size
-        right_col1_x = right_col2_x - pad_separation - pad_size
+        # Left deck pads - moved 20px towards center from previous position
+        left_grid_x = 125 + 20  # 145px from left edge (20px towards center)
+        left_col1_x = left_grid_x
+        left_col2_x = left_grid_x + pad_size + pad_separation  # 145 + 150 + 20 = 315px
+        
+        # Right deck pads - moved 20px towards center from previous position
+        right_grid_end_x = self.screen_width - 125 - 20  # screen_width - 145px (20px towards center)
+        right_col2_x = right_grid_end_x - pad_size  # Rightmost pad
+        right_col1_x = right_col2_x - pad_separation - pad_size  # Left pad
+        
+        # Calculate circular button positions - fine-tuned: 100px towards edges, then 35px back towards center
+        play_pause_center_x_left = 635 - 100 + 35  # 570px from left edge (100px towards edge, then 35px back towards center)
+        play_pause_center_x_right = self.screen_width - 635 + 100 - 35  # 1350px from left edge (100px towards edge, then 35px back towards center)
+        play_pause_center_y = self.screen_height - 100 - 75  # 175px from bottom edge
+        
+        # Cue buttons 20px above play/pause (center-to-center distance = 20 + 75 + 75 = 170px)
+        cue_center_y = play_pause_center_y - 170
         
         # Buttons for Deck 1 (left side) - circular buttons + 2x2 pad grid
         self.deck1_buttons = {
             "cue": ControllerButton("Cue", play_pause_center_x_left - 75, cue_center_y - 75, 150, 150, button_type="momentary"),
             "play_pause": ControllerButton("Play/Pause", play_pause_center_x_left - 75, play_pause_center_y - 75, 150, 150, button_type="toggle"),
-            # Bottom row (clickable)
-            "vocal": ControllerButton("Vocal", left_col1_x, bottom_pad_y, pad_size, pad_size, button_type="toggle"),
-            "instrumental": ControllerButton("Instrumental", left_col2_x, bottom_pad_y, pad_size, pad_size, button_type="toggle"),
-            # Top row (non-clickable, just for show)
-            "pad_top_left": ControllerButton("PAD 1", left_col1_x, top_pad_y, pad_size, pad_size, button_type="display"),
-            "pad_top_right": ControllerButton("PAD 2", left_col2_x, top_pad_y, pad_size, pad_size, button_type="display")
+            # Top row (clickable) - SWAPPED: vocal/instrumental now on top
+            "vocal": ControllerButton("Vocal", left_col1_x, top_pad_y, pad_size, pad_size, button_type="toggle"),
+            "instrumental": ControllerButton("Instrumental", left_col2_x, top_pad_y, pad_size, pad_size, button_type="toggle"),
+            # Bottom row (non-clickable, just for show) - SWAPPED: display pads now on bottom
+            "pad_bottom_left": ControllerButton("PAD 1", left_col1_x, bottom_pad_y, pad_size, pad_size, button_type="display"),
+            "pad_bottom_right": ControllerButton("PAD 2", left_col2_x, bottom_pad_y, pad_size, pad_size, button_type="display")
         }
         
         # Buttons for Deck 2 (right side) - circular buttons + 2x2 pad grid
         self.deck2_buttons = {
             "cue": ControllerButton("Cue", play_pause_center_x_right - 75, cue_center_y - 75, 150, 150, button_type="momentary"),
             "play_pause": ControllerButton("Play/Pause", play_pause_center_x_right - 75, play_pause_center_y - 75, 150, 150, button_type="toggle"),
-            # Bottom row (clickable) - switched to match left side
-            "vocal": ControllerButton("Vocal", right_col1_x, bottom_pad_y, pad_size, pad_size, button_type="toggle"),
-            "instrumental": ControllerButton("Instrumental", right_col2_x, bottom_pad_y, pad_size, pad_size, button_type="toggle"),
-            # Top row (non-clickable, just for show)
-            "pad_top_left": ControllerButton("PAD 3", right_col1_x, top_pad_y, pad_size, pad_size, button_type="display"),
-            "pad_top_right": ControllerButton("PAD 4", right_col2_x, top_pad_y, pad_size, pad_size, button_type="display")
+            # Top row (clickable) - SWAPPED: vocal/instrumental now on top, matching left side
+            "vocal": ControllerButton("Vocal", right_col1_x, top_pad_y, pad_size, pad_size, button_type="toggle"),
+            "instrumental": ControllerButton("Instrumental", right_col2_x, top_pad_y, pad_size, pad_size, button_type="toggle"),
+            # Bottom row (non-clickable, just for show) - SWAPPED: display pads now on bottom
+            "pad_bottom_left": ControllerButton("PAD 3", right_col1_x, bottom_pad_y, pad_size, pad_size, button_type="display"),
+            "pad_bottom_right": ControllerButton("PAD 4", right_col2_x, bottom_pad_y, pad_size, pad_size, button_type="display")
         }
         
         # Center controls (crossfader only, no effects)
@@ -3186,6 +3185,14 @@ class DJController:
                     self._draw_rounded_rectangle(overlay, button.x, button.y, 
                                                button.width, button.height, corner_radius, pad_color, -1)
                     
+                    # Draw light grey border around ALL pads for better definition (same thickness as active border)
+                    light_grey_border = (80, 80, 80)  # Light grey border for all pads
+                    border_thickness = 4  # Same thickness as active border for consistency
+                    border_offset = border_thickness // 2
+                    self._draw_rounded_border_only(overlay, button.x - border_offset, button.y - border_offset, 
+                                                 button.width + border_thickness, button.height + border_thickness, 
+                                                 corner_radius, light_grey_border, border_thickness)
+                    
                     # Draw colored border light around button when active/pressed (external rounded border)
                     if button.is_active or button.is_pressed:
                         ring_color = color
@@ -3464,8 +3471,8 @@ class DJController:
         bank_account = "21 Savage - Bank Account"
         what_is_love = "TWICE - What is Love"
         
-        DECK1_SONG = mcdonalds
-        DECK2_SONG = no_pole  
+        DECK1_SONG = die_young
+        DECK2_SONG = levels  
         
         # Scan available tracks
         self.track_loader.scan_tracks()
