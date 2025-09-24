@@ -57,12 +57,15 @@ songs/
 
 ## **Ready to DJ!**
 
-Once your music is set up, run:
+**Try it immediately with included songs:**
 ```bash
 python air_dj.py
 ```
 
-Your songs will appear in the selection menu. Choose your tracks and start mixing with hand gestures!
+The repository includes 2 copyright-free example songs so you can test Air DJ right away!
+
+**Add your own music:**
+Once you add your own stem-separated songs to this folder, they'll appear in the selection menu alongside the examples.
 
 ---
 

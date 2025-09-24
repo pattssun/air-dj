@@ -93,10 +93,10 @@ Air DJ works with stem-separated audio files (vocals + instrumental tracks).
 **[Complete Music Setup Guide →](songs/MUSIC_SETUP.md)**
 
 **Quick Start:**
-1. Get stem-separated songs from [fadr.com](https://fadr.com/stems) (free AI separation)
-2. Create folders in `songs/` directory: `Artist - Song Name/`
-3. Add required files: `Vocals - Song.mp3` and `Instrumental - Song.mp3`
-4. Run `python air_dj.py` and your songs will appear in the menu!
+1. **Try it immediately**: Run `python air_dj.py` - includes 2 copyright-free example songs!
+2. **Add your music**: Get stem-separated songs from [fadr.com](https://fadr.com/stems) (free AI separation)
+3. Create folders in `songs/` directory: `Artist - Song Name/`
+4. Add required files: `Vocals - Song.mp3` and `Instrumental - Song.mp3`
 
 ### **Interactive Selection (Default)**
 ```bash
