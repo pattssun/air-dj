@@ -49,31 +49,14 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
-# Audio files - users will add their own music
-songs/*.mp3
-songs/*.wav
-songs/*.flac
-songs/*.m4a
-songs/*.aac
-songs/*/
-songs/**/*.mp3
-songs/**/*.wav
-songs/**/*.flac
-songs/**/*.m4a
-songs/**/*.aac
-songs/**/*.png
-songs/**/*.jpg
-songs/**/*.jpeg
-
-# Keep the songs directory structure but ignore content
+# Only include copyright-free example songs, .gitkeep, and MUSIC_SETUP.md in songs/
+songs/*
 !songs/.gitkeep
 !songs/MUSIC_SETUP.md
-
-# Include copyright-free example songs for users
-!songs/Copyright\ free\ 1/
-!songs/Copyright\ free\ 1/**
-!songs/Copyright\ free\ 2/
-!songs/Copyright\ free\ 2/**
+!songs/Copyright free 1/
+!songs/Copyright free 1/**
+!songs/Copyright free 2/
+!songs/Copyright free 2/**
 
 # Audio cache
 *.cache
