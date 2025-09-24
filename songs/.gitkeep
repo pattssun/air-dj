@@ -1,0 +1,13 @@
+# This file keeps the songs directory in git
+# Users should add their own music folders here
+#
+# Example structure:
+# songs/
+#   ├── Artist - Song Name/
+#   │   ├── Vocals - Artist - Song Name.mp3
+#   │   ├── Instrumental - Artist - Song Name.mp3
+#   │   ├── Drums - Artist - Song Name.mp3 (optional)
+#   │   ├── Bass - Artist - Song Name.mp3 (optional) 
+#   │   └── album-art.png (optional)
+#   └── Another Song/
+#       └── ...

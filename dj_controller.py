@@ -855,15 +855,14 @@ class AudioEngine:
             print(f"   Buffer Size: {self.server.getBufferSize()}")
             
         except Exception as e:
-            print(f"❌ Error initializing audio: {e}")
-            print("🔧 Trying basic audio configuration...")
+            pass  # Silently try basic configuration
             
             # Very basic fallback
             try:
                 self.server = Server(sr=44100, nchnls=2)
                 self.server.boot()
                 self.server.start()
-                print("✅ Basic audio server started")
+                pass  # Silently start basic audio
             except Exception as fallback_error:
                 print(f"❌ All audio configurations failed: {fallback_error}")
                 self.server = None
@@ -911,7 +910,7 @@ class AudioEngine:
                     self.deck1_master_player = master_player
                 else:
                     self.deck2_master_player = master_player
-                print(f"Created master player for deck {deck} timeline control")
+                pass  # Silently create master player
             
             # Load only vocal and instrumental stems for clear isolation
             target_stems = ["vocals", "instrumental"]
@@ -926,7 +925,7 @@ class AudioEngine:
                         
                         players[stem_type] = player
                         volumes[stem_type] = 0.7  # Default volume
-                        print(f"Loaded {stem_type} for deck {deck} with EQ")
+                        pass  # Silently load stem
                     else:
                         print(f"Warning: {stem_type} file not found for deck {deck}")
                 else:
@@ -965,7 +964,7 @@ class AudioEngine:
             
             # Initialize stem volumes 
             self._update_all_stem_volumes(deck)
-            print(f"Initialized volumes for deck {deck} - RELIABLE AUDIO + EQ CONTROLS")
+            pass  # Silently initialize volumes
             
             return True
         except Exception as e:
@@ -1668,7 +1667,7 @@ class TrackLoader:
                 if track:
                     self.available_tracks.append(track)
         
-        print(f"Found {len(self.available_tracks)} tracks with stems")
+        pass  # Silently scan tracks
     
     def _parse_stem_folder(self, folder_name: str, folder_path: str) -> Optional[Track]:
         """Parse a stem folder and create a Track object"""
@@ -1731,9 +1730,12 @@ class TrackLoader:
 class DJController:
     """Main DJ Controller class with transparent overlay"""
     
-    def __init__(self, enable_bpm_sync=True):
+    def __init__(self, enable_bpm_sync=True, selected_songs=None):
         # BPM sync configuration
         self.enable_bpm_sync = enable_bpm_sync
+        
+        # Store selected songs
+        self.selected_songs = selected_songs
         
         # Initialize components
         self.hand_tracker = HandTracker()
@@ -1797,7 +1799,7 @@ class DJController:
         self.jog_rotation_speed = 0.0  # Current rotation speed for scratching
         
         # Video capture with DJ-optimized camera wrapper
-        print("🎥 Setting up DJ-optimized camera...")
+        pass  # Silently set up camera
         try:
             from iphone_camera_integration import create_dj_camera
             self.dj_camera = create_dj_camera()
@@ -3455,47 +3457,26 @@ class DJController:
                     connect_y = (middle_y + index_y) // 2
                     cv2.circle(frame, (connect_x, connect_y), 12, (255, 255, 255), -1)
     
-    def load_default_tracks(self):
-        """Load default tracks into both decks with easy song selection"""
+    def load_default_tracks(self, selected_songs=None):
+        """Load tracks into both decks"""
         
-        levels = "Avicii - Levels"
-        no_broke_boys = "Disco Lines & Tinashe - No Broke Boys"
-        calabria = "Calabria 2007"
-        sprinter = "Central Cee x Dave - Sprinter"
-        victory_lap = "Fred again.. x Skepta x PlaqueBoyMax - Victory Lap"
-        golden = "Huntrix - Golden KPop Demon Hunters"
-        i_love_it = "Icona Pop - I Love It (Feat. Charli XCX)"
-        die_young = "Kesha - Die Young"
-        no_hands = "Waka Flocka Flame - No Hands (feat. Roscoe Dash and Wale)"
-        sushi_dont_lie = "SKAIISYOURGOD"
-        sexy_bitch = "David Guetta - Sexy Bitch (feat. Akon)"
-        heads_will_roll = "Heads Will Roll (A-Trak Remix Radio Edit)"
-        fukumean = "Gunna - fukumean"
-        no_pole = "Don Toliver - No Pole"
-        mcdonalds = "POV_ You're at McDonald's"
-        shotta_flow = "NLE Choppa - Shotta Flow"
-        last_friday_night = "Katy Perry - Last Friday Night (T.G.I.F)"
-        newjeans = "NewJeans 'New Jeans (ft. The Powerpuff Girls)' (뉴진스 New Jeans 가사)"
-        clarity = "Zedd feat. Foxes - Clarity"
-        long_time = "Long Time (Intro)"
-        bank_account = "21 Savage - Bank Account"
-        what_is_love = "TWICE - What is Love"
-        
-        DECK1_SONG = die_young
-        DECK2_SONG = levels  
-        
-        # Scan available tracks
+        # Scan available tracks first
         self.track_loader.scan_tracks()
         
         if len(self.track_loader.available_tracks) == 0:
             print("❌ No tracks found in songs folder!")
             return
-            
-        # Display available tracks for reference
-        print(f"📁 Found {len(self.track_loader.available_tracks)} available tracks:")
-        for i, track in enumerate(self.track_loader.available_tracks):
-            print(f"  {i+1}: {track.name}")
-        print()
+        
+        # Get song selection
+        if selected_songs:
+            DECK1_SONG, DECK2_SONG = selected_songs
+            print(f"🎵 DECK 1: {DECK1_SONG}")
+            print(f"🎵 DECK 2: {DECK2_SONG}")
+        else:
+            # Use default hardcoded songs
+            DECK1_SONG = "Kesha - Die Young"
+            DECK2_SONG = "Avicii - Levels"
+            print(f"🎵 Using default songs: {DECK1_SONG} & {DECK2_SONG}")
         
         # Load specific songs if specified
         if DECK1_SONG:
@@ -3540,8 +3521,7 @@ class DJController:
         # Display final BPM status
         self.print_bpm_status()
         
-        print("✅ Track loading complete!")
-        print()
+        print("✅ Ready to DJ!")
     
     def _auto_bpm_sync(self):
         """Automatically sync both decks to the average BPM of the loaded tracks"""
@@ -3806,20 +3786,10 @@ class DJController:
     
     def run(self):
         """Main loop for the DJ controller"""
-        print("=" * 60)
-        print("          🎧 AIR DJ CONTROLLER - Hand Tracking DJ 🎧")
-        print("=" * 60)
-        print("Features:")
-        print("• Professional jog wheels with scratching and navigation")
-        print("• Middle finger + index finger pinch for jog wheels")
-        print("• Thumb + index finger pinch for other controls")
-        print("• Real-time scratching when tracks are playing")
-        print("• Track navigation when tracks are stopped")
-        print("• Complete professional DJ controller experience")
-        print("=" * 60)
+        pass  # Silently start interface
         
-        # Load default tracks
-        self.load_default_tracks()
+        # Load default tracks with selected songs
+        self.load_default_tracks(self.selected_songs)
         
         # Frame rate synchronization for smooth 60fps operation
         self.target_fps = 60.0
@@ -3828,8 +3798,6 @@ class DJController:
         self.frame_count = 0
         self.fps_start_time = time.time()
         self.actual_fps = 60.0
-        
-        print(f"🎬 Synchronizing to {self.target_fps}fps for ultra-smooth operation")
         
         # Animation controller will be initialized after deck setup
         

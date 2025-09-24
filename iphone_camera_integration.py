@@ -48,11 +48,18 @@ class ContinuityCameraManager:
         Detect iPhone/OBS Virtual Camera device index by testing available video devices
         Prioritizes OBS Virtual Camera and other high-quality sources
         """
-        # Check for environment variable override
+        # Check for environment variable overrides
         import os
         if os.getenv('FORCE_BUILTIN_CAMERA', '').lower() in ['1', 'true', 'yes']:
             print("🔧 FORCE_BUILTIN_CAMERA detected - using built-in camera")
             return 0
+            
+        # Force OBS Virtual Camera override (when detection is too strict)
+        obs_device = os.getenv('FORCE_OBS_DEVICE', '')
+        if obs_device.isdigit():
+            device_num = int(obs_device)
+            print(f"🎥 FORCE_OBS_DEVICE detected - using OBS Virtual Camera Device {device_num}")
+            return device_num
             
         print("🔍 Detecting cameras (prioritizing OBS Virtual Camera and iPhone)...")
         print("💡 TIP: Set FORCE_BUILTIN_CAMERA=1 to bypass iPhone detection if needed")
@@ -475,9 +482,12 @@ class DJCameraWrapper:
             print("❌ Failed to initialize any camera")
             return False
         
-        # Store camera info
+        # Store camera info and determine camera type
         self.device_index = device_index
         self.is_iphone_camera = (device_index > 0)  # Assume external cameras are iPhone/OBS
+        
+        # Determine if this is OBS Virtual Camera or direct iPhone Continuity Camera
+        self.is_obs_virtual_camera = self._detect_obs_virtual_camera(device_index)
         
         # Configure camera settings
         success = self.camera_manager.configure_camera_for_quality(self.cap)
@@ -501,8 +511,12 @@ class DJCameraWrapper:
             
         print(f"✅ Camera initialized successfully!")
         if self.is_iphone_camera:
-            print(f"📱 Using iPhone/OBS camera (Device {device_index})")
-            print(f"🪞 iPhone camera: natural mirror behavior (OBS handles mirroring)")
+            if self.is_obs_virtual_camera:
+                print(f"📱 Using iPhone via OBS Virtual Camera (Device {device_index})")
+                print(f"🪞 iPhone via OBS: will apply horizontal flip for mirror effect")
+            else:
+                print(f"📱 Using iPhone Continuity Camera (Device {device_index})")
+                print(f"🪞 iPhone Continuity Camera: will apply horizontal flip for mirror effect")
         else:
             print(f"💻 Using built-in camera (Device {device_index})")
             print(f"🪞 Built-in camera: will apply horizontal flip for mirror effect")
@@ -529,10 +543,11 @@ class DJCameraWrapper:
         if current_width != self.target_width or current_height != self.target_height:
             frame = cv2.resize(frame, (self.target_width, self.target_height))
         
-        # Apply horizontal flip only for built-in cameras
-        # iPhone/OBS cameras already provide correct mirroring
-        if not self.is_iphone_camera:
-            # Built-in camera: apply horizontal flip for natural mirror effect
+        # Apply horizontal flip for all cameras to ensure mirror behavior
+        # User reported that iPhone via OBS also needs flipping for proper mirror effect
+        should_flip = True  # Default: flip all cameras for mirror behavior
+        
+        if should_flip:
             frame = cv2.flip(frame, 1)
         
         return True, frame
@@ -542,6 +557,44 @@ class DJCameraWrapper:
         if self.cap:
             self.cap.release()
             print("📹 Camera released")
+    
+    def _detect_obs_virtual_camera(self, device_index: int) -> bool:
+        """
+        Detect if this device is OBS Virtual Camera vs direct iPhone Continuity Camera
+        """
+        try:
+            # Simple heuristic: OBS Virtual Camera typically appears at specific indices
+            # and has specific device characteristics
+            
+            # Check if we have camera access for testing
+            if not self.cap or not self.cap.isOpened():
+                return False
+            
+            # Get device properties
+            width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = int(self.cap.get(cv2.CAP_PROP_FPS))
+            
+            # OBS Virtual Camera characteristics:
+            # 1. Usually high resolution (1920x1080)
+            # 2. Usually 60fps or 30fps exactly
+            # 3. Device index > 0
+            if device_index > 0 and width >= 1920 and height >= 1080 and fps in [30, 60]:
+                # Additional check: try to read a frame and see if it looks like OBS
+                ret, frame = self.cap.read()
+                if ret and frame is not None:
+                    # If we successfully configured this device earlier in our detection process
+                    # and it passed our strict verification, it's likely OBS
+                    # (This is a heuristic - may need refinement based on real usage)
+                    
+                    # For now, be conservative: assume it's OBS if it's high-res and high-fps
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            # If detection fails, assume it's not OBS Virtual Camera
+            return False
     
     def get_resolution(self) -> Tuple[int, int]:
         """Get current camera resolution"""

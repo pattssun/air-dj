@@ -23,11 +23,16 @@ Control a DJ interface using hand gestures through your webcam.
 ## Quick Start
 
 ### Prerequisites
-- Python 3.8+
-- Webcam
-- Audio files with stems (see installation step 4 below)
+- **Python 3.9 - 3.12** (MediaPipe compatibility requirement)
+- **64-bit Operating System** (Windows/macOS/Linux)
+- **Webcam** (built-in or external)
+- **Audio files with stems** (see "Add Your Music" section below)
+
+⚠️ **Important**: Python 3.13+ and Python 3.8 are not supported due to MediaPipe compatibility.
 
 ### Installation
+
+#### **macOS / Linux**
 
 1. **Clone the repository:**
    ```bash
@@ -38,7 +43,7 @@ Control a DJ interface using hand gestures through your webcam.
 2. **Create virtual environment:**
    ```bash
    python -m venv venv
-   source venv/bin/activate  # On Windows: venv_py311\Scripts\activate
+   source venv/bin/activate
    ```
 
 3. **Install dependencies:**
@@ -46,19 +51,64 @@ Control a DJ interface using hand gestures through your webcam.
    pip install -r requirements.txt
    ```
 
-4. **Add your music:**
-   ```bash
-   # Place stem folders in the songs/ directory
-   # Each song should have separate vocal/instrumental files
+#### **Windows**
+
+1. **Clone the repository:**
+   ```cmd
+   git clone https://github.com/yourusername/air-dj.git
+   cd air-dj
    ```
-Getting Stems:
-- Use AI stem separation tools (https://fadr.com/stems)
-- Download pre-separated stems from music platforms
-- The included songs folder has example stems ready to use
 
-### Launch Air DJ
+2. **Create virtual environment:**
+   ```cmd
+   python -m venv venv
+   venv\Scripts\activate
+   ```
 
+3. **Install dependencies:**
+   ```cmd
+   pip install -r requirements.txt
+   ```
+
+### **Launch Air DJ**
+
+#### **macOS / Linux**
 ```bash
 source venv/bin/activate
 python air_dj.py
 ```
+
+#### **Windows**
+```cmd
+venv\Scripts\activate
+python air_dj.py
+```
+
+## **Song Selection**
+
+### **Add Your Music**
+
+Air DJ works with stem-separated audio files (vocals + instrumental tracks).
+
+**[Complete Music Setup Guide →](songs/MUSIC_SETUP.md)**
+
+**Quick Start:**
+1. Get stem-separated songs from [fadr.com](https://fadr.com/stems) (free AI separation)
+2. Create folders in `songs/` directory: `Artist - Song Name/`
+3. Add required files: `Vocals - Song.mp3` and `Instrumental - Song.mp3`
+4. Run `python air_dj.py` and your songs will appear in the menu!
+
+### **Interactive Selection (Default)**
+```bash
+python air_dj.py
+```
+Choose your songs from a numbered menu. **BPM sync enabled by default.**
+
+### **Other Options**
+```bash
+python air_dj.py --default    # Skip song selection, use preset songs
+python air_dj.py --unsync     # Disable BPM synchronization between decks
+```
+
+## **Licensing**
+Air DJ is available under **[MIT License](LICENSE)**

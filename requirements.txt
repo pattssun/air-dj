@@ -1,7 +1,17 @@
-opencv-python>=4.7.0
-mediapipe>=0.10.0
-pyo>=1.0.0
-numpy>=1.20.0
-tensorflow-macos>=2.9.0
-librosa>=0.10.0
-scipy>=1.9.0 
+# Core computer vision and audio processing
+# Python 3.9-3.12 required for MediaPipe compatibility
+opencv-python>=4.7.0,<5.0.0
+mediapipe>=0.10.0,<0.11.0
+numpy>=1.20.0,<2.0.0
+librosa>=0.10.0,<1.0.0
+scipy>=1.9.0,<2.0.0
+
+# Audio engine (cross-platform)
+pyo>=1.0.0,<2.0.0
+
+# TensorFlow (MediaPipe dependency - platform-specific)
+tensorflow>=2.9.0,<3.0.0; platform_system != "Darwin" or platform_machine != "arm64"
+tensorflow-macos>=2.9.0,<3.0.0; platform_system == "Darwin" and platform_machine == "arm64"
+
+# Windows audio support (optional)
+pyaudio>=0.2.11; platform_system == "Windows"
