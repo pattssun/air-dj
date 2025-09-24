@@ -86,6 +86,7 @@ class Track:
     bpm: int
     key: str
     stems: Dict[str, str]  # stem_type -> file_path
+    album_artwork: Optional[str] = None  # Path to album artwork PNG
 
 @dataclass
 class WaveformData:
@@ -1671,18 +1672,26 @@ class TrackLoader:
     
     def _parse_stem_folder(self, folder_name: str, folder_path: str) -> Optional[Track]:
         """Parse a stem folder and create a Track object"""
-        # Look for stem files
+        # Look for stem files and album artwork
         stems = {}
         bpm = 120  # Default BPM
         key = "C"  # Default key
+        album_artwork = None
         
         # Expected stem types
         stem_types = ["vocals", "instrumental", "drums", "bass", "other"]
         
         for file in os.listdir(folder_path):
-            if file.lower().endswith(('.mp3', '.wav')):
-                file_path = os.path.join(folder_path, file)
+            file_path = os.path.join(folder_path, file)
                 
+            # Check for album artwork (PNG files)
+            if file.lower().endswith('.png'):
+                if album_artwork is None:  # Use first PNG found
+                    album_artwork = file_path
+                    print(f"🎨 Found album artwork for '{folder_name}': {file}")
+            
+            # Check for stem files
+            elif file.lower().endswith(('.mp3', '.wav')):
                 # Try to identify stem type from filename
                 file_lower = file.lower()
                 for stem_type in stem_types:
@@ -1708,7 +1717,8 @@ class TrackLoader:
                 folder_path=folder_path,
                 bpm=bpm,
                 key=key,
-                stems=stems
+                stems=stems,
+                album_artwork=album_artwork
             )
         return None
     
@@ -1721,7 +1731,10 @@ class TrackLoader:
 class DJController:
     """Main DJ Controller class with transparent overlay"""
     
-    def __init__(self):
+    def __init__(self, enable_bpm_sync=True):
+        # BPM sync configuration
+        self.enable_bpm_sync = enable_bpm_sync
+        
         # Initialize components
         self.hand_tracker = HandTracker()
         self.audio_engine = AudioEngine()
@@ -1763,6 +1776,14 @@ class DJController:
         # Jog wheel rotation states
         self.deck1_jog_rotation = 0.0  # Current rotation angle in degrees
         self.deck2_jog_rotation = 0.0  # Current rotation angle in degrees
+        
+        # Album artwork rotation states (separate from jog wheel rotation)
+        self.deck1_artwork_rotation = 0.0  # Album artwork rotation in degrees
+        self.deck2_artwork_rotation = 0.0  # Album artwork rotation in degrees
+        
+        # Album artwork images (loaded when tracks are loaded)
+        self.deck1_artwork_image = None
+        self.deck2_artwork_image = None
         
         # Slider interaction state - for intuitive pinch-to-grab behavior
         self.active_slider = None  # Which slider is currently grabbed
@@ -1904,12 +1925,16 @@ class DJController:
                 # Reset jog wheel rotation when cued
                 self.deck1_jog_rotation = 0.0
                 self.jog_wheel_1.current_angle = 0.0
+                # Reset album artwork rotation to default position (0 degrees)
+                self.deck1_artwork_rotation = 0.0
             elif deck == 2:
                 self.audio_engine.cue_deck(2)
                 button.is_active = True
                 # Reset jog wheel rotation when cued
                 self.deck2_jog_rotation = 0.0
                 self.jog_wheel_2.current_angle = 0.0
+                # Reset album artwork rotation to default position (0 degrees)
+                self.deck2_artwork_rotation = 0.0
         
         elif button.name == "Play/Pause":
             if button.button_type == "toggle":
@@ -1966,44 +1991,86 @@ class DJController:
                 self.audio_engine.stop_cue_deck(2)
     
     def check_button_collision(self, x: int, y: int, button: ControllerButton) -> bool:
-        """Check if coordinates collide with button - supports both circular and rectangular buttons"""
+        """Check if coordinates collide with button with enhanced hit area for better reliability"""
         # Skip display-only buttons (non-clickable)
         if button.button_type == "display":
             return False
+        
+        # Determine if we're in an edge area for better tolerance  
+        edge_margin = 200
+        in_edge_area = (x < edge_margin or x > self.screen_width - edge_margin or 
+                       y < edge_margin or y > self.screen_height - edge_margin)
             
         if button.name in ["Cue", "Play/Pause"]:
-            # Circular collision detection for cue and play/pause buttons
-            # Button x,y represents top-left, so center is at x + radius, y + radius
+            # Enhanced circular collision detection for cue and play/pause buttons
             center_x = button.x + 75  # radius = 75px for 150px diameter
             center_y = button.y + 75
             distance = ((x - center_x) ** 2 + (y - center_y) ** 2) ** 0.5
-            return distance <= 75  # within radius
+            
+            # Expanded radius with edge area compensation
+            if in_edge_area:
+                expanded_radius = 100  # 75 + 25px extra in edge areas
+            else:
+                expanded_radius = 85   # 75 + 10px in center areas
+                
+            return distance <= expanded_radius
         else:
-            # Rectangular collision detection for other buttons
-            return (button.x <= x <= button.x + button.width and 
-                    button.y <= y <= button.y + button.height)
+            # Enhanced rectangular collision detection with margins
+            if in_edge_area:
+                margin = 25  # Large margin in edge areas
+            else:
+                margin = 15  # Moderate margin in center areas
+                
+            return (button.x - margin <= x <= button.x + button.width + margin and 
+                    button.y - margin <= y <= button.y + button.height + margin)
     
     def check_button_collision_expanded(self, x: int, y: int, button: ControllerButton) -> bool:
-        """Check if coordinates collide with button using expanded hit area for better reliability"""
+        """Check if coordinates collide with button using greatly expanded hit area for maximum reliability"""
         # Skip display-only buttons (non-clickable)
         if button.button_type == "display":
             return False
-            
+        
+        # Determine if we're in an edge/corner area where tracking is less reliable
+        edge_margin = 200  # Consider 200px from edges as "difficult tracking area"
+        in_edge_area = (x < edge_margin or x > self.screen_width - edge_margin or 
+                       y < edge_margin or y > self.screen_height - edge_margin)
+        
         if button.name in ["Cue", "Play/Pause"]:
-            # Expanded circular collision detection for cue and play/pause buttons
+            # Greatly expanded circular collision detection for cue and play/pause buttons
             center_x = button.x + 75  # radius = 75px for 150px diameter
             center_y = button.y + 75
             distance = ((x - center_x) ** 2 + (y - center_y) ** 2) ** 0.5
-            return distance <= 85  # expanded radius (75 + 10px margin)
+            
+            # Much larger hit areas - especially in edge areas
+            if in_edge_area:
+                expanded_radius = 110  # 75 + 35px extra margin in edge areas
+            else:
+                expanded_radius = 95   # 75 + 20px margin in center areas
+            
+            return distance <= expanded_radius
         else:
-            # Expanded rectangular collision detection for other buttons
-            margin = 10
+            # Greatly expanded rectangular collision detection for pads
+            if in_edge_area:
+                margin = 30  # Large margin in edge areas for pads
+            else:
+                margin = 20  # Standard large margin for pads
+                
             return (button.x - margin <= x <= button.x + button.width + margin and 
                     button.y - margin <= y <= button.y + button.height + margin)
     
     def check_fader_collision(self, x: int, y: int, fader: Fader) -> bool:
-        """Check if coordinates collide with fader (expanded area for easier interaction)"""
-        margin = 15  # Larger margin for faders to make them easier to grab
+        """Check if coordinates collide with fader (greatly expanded area for maximum reliability)"""
+        # Determine if we're in an edge area for extra tolerance
+        edge_margin = 200
+        in_edge_area = (x < edge_margin or x > self.screen_width - edge_margin or 
+                       y < edge_margin or y > self.screen_height - edge_margin)
+        
+        # Much larger margins for better interaction, especially at edges
+        if in_edge_area:
+            margin = 35  # Extra large margin in edge areas
+        else:
+            margin = 25  # Large margin in center areas
+            
         return (fader.x - margin <= x <= fader.x + fader.width + margin and 
                 fader.y - margin <= y <= fader.y + fader.height + margin)
     
@@ -2038,8 +2105,18 @@ class DJController:
         self.audio_engine.set_crossfader_position(crossfader_value)
     
     def check_crossfader_collision(self, x: int, y: int) -> bool:
-        """Check if coordinates are within the crossfader's draggable area"""
-        margin = 15  # Add margin for easier grabbing
+        """Check if coordinates are within the crossfader's draggable area (greatly expanded for reliability)"""
+        # Determine if we're in an edge area for extra tolerance
+        edge_margin = 200
+        in_edge_area = (x < edge_margin or x > self.screen_width - edge_margin or 
+                       y < edge_margin or y > self.screen_height - edge_margin)
+        
+        # Much larger margins for better interaction, especially at edges
+        if in_edge_area:
+            margin = 35  # Extra large margin in edge areas
+        else:
+            margin = 25  # Large margin in center areas
+            
         return (self.crossfader.x - margin <= x <= self.crossfader.x + self.crossfader.width + margin and
                 self.crossfader.y - margin <= y <= self.crossfader.y + self.crossfader.height + margin)
     
@@ -2241,7 +2318,7 @@ class DJController:
                 # Check all button groups for simultaneous button presses
                 for buttons, deck_name in [(self.deck1_buttons, "Deck 1"), (self.deck2_buttons, "Deck 2"), (self.center_buttons, "Center")]:
                     for button in buttons.values():
-                        if self.check_button_collision(x, y, button):
+                        if self.check_button_collision_expanded(x, y, button):
                             button.is_pressed = True
                             # Trigger button action if this is a new press
                             if not prev_pressed_states.get(id(button), False):
@@ -2722,7 +2799,7 @@ class DJController:
         # Apply rotation
         rotated = cv2.warpAffine(image, rotation_matrix, (image.shape[1], image.shape[0]))
         return rotated
- 
+    
     def _draw_professional_jog_wheel(self, overlay, jog_wheel, deck_num, label):
         """Draw jog wheel using UI image with rotation based on interaction"""
         center_x, center_y = jog_wheel.center_x, jog_wheel.center_y
@@ -2737,17 +2814,20 @@ class DJController:
             # Get current rotation angle (only rotate when manually interacting, not during playback)
             current_rotation = self.deck1_jog_rotation if deck_num == 1 else self.deck2_jog_rotation
             
-            # Only rotate the wheel image when being touched (like real DJ controllers)
-            if is_touching:
-                rotated_image = self._rotate_image(self.jogwheel_image, -current_rotation, (250, 250))
-            else:
-                rotated_image = self.jogwheel_image
-            
-            # Draw the jog wheel image
-            if rotated_image is not None:
-                top_left_x = center_x - 250
-                top_left_y = center_y - 250
-                self._draw_jog_wheel_image(overlay, rotated_image, top_left_x, top_left_y)
+        # Only rotate the wheel image when being touched (like real DJ controllers)
+        if is_touching:
+            rotated_image = self._rotate_image(self.jogwheel_image, -current_rotation, (250, 250))
+        else:
+            rotated_image = self.jogwheel_image
+        
+        # Draw the jog wheel image
+        if rotated_image is not None:
+            top_left_x = center_x - 250
+            top_left_y = center_y - 250
+            self._draw_jog_wheel_image(overlay, rotated_image, top_left_x, top_left_y)
+        
+        # Draw album artwork in center of jog wheel (210px diameter, rotating like real DJ controllers)
+        self._draw_album_artwork_on_jog_wheel(overlay, deck_num, center_x, center_y)
         
         # Draw position indicator line (like real DJ controllers - shows playback position)
         if is_playing:
@@ -2779,6 +2859,62 @@ class DJController:
             text_color = (255, 255, 0)  # Yellow
             cv2.putText(overlay, feedback_text, (center_x - 40, center_y - radius - 20), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
+    
+    def _draw_album_artwork_on_jog_wheel(self, overlay, deck_num, center_x, center_y):
+        """Draw rotating album artwork in the center of the jog wheel (210px diameter)"""
+        # Get the appropriate album artwork image and rotation angle
+        if deck_num == 1:
+            artwork_image = self.deck1_artwork_image
+            rotation_angle = self.deck1_artwork_rotation
+        elif deck_num == 2:
+            artwork_image = self.deck2_artwork_image
+            rotation_angle = self.deck2_artwork_rotation
+        else:
+            return  # Invalid deck number
+        
+        # If no album artwork is available, keep the center blank
+        if artwork_image is None:
+            return
+        
+        # Rotate the album artwork based on current rotation angle
+        rotated_artwork = self._rotate_image(artwork_image, rotation_angle, (105, 105))  # Center at 105,105 for 210x210 image
+        
+        if rotated_artwork is not None:
+            # Draw the rotated album artwork in the center of the jog wheel
+            # Position it so it's centered on the jog wheel center
+            artwork_top_left_x = center_x - 105  # Half of 210px
+            artwork_top_left_y = center_y - 105  # Half of 210px
+            
+            # Apply circular mask to make it look like a real vinyl record
+            self._draw_circular_image(overlay, rotated_artwork, artwork_top_left_x, artwork_top_left_y, 105)
+    
+    def _draw_circular_image(self, overlay, image, x, y, radius):
+        """Draw an image with circular mask (like a vinyl record)"""
+        if image is None:
+            return
+        
+        h, w = image.shape[:2]
+        
+        # Ensure we don't draw outside overlay bounds
+        if x < 0 or y < 0 or x + w > overlay.shape[1] or y + h > overlay.shape[0]:
+            return
+        
+        # Create circular mask
+        center = (radius, radius)  # Center of the image
+        y_coords, x_coords = np.ogrid[:h, :w]
+        mask = (x_coords - center[0])**2 + (y_coords - center[1])**2 <= radius**2
+        
+        # Extract BGR channels
+        if len(image.shape) == 4:
+            bgr = image[:, :, :3]
+        else:
+            bgr = image
+        
+        # Apply circular mask to only draw pixels within the circle
+        overlay_region = overlay[y:y+h, x:x+w]
+        
+        for c in range(3):
+            overlay_region[:, :, c] = np.where(mask, bgr[:, :, c], overlay_region[:, :, c])
     
     def _draw_jog_wheel_image(self, overlay, image, x, y):
         """Draw jog wheel image with circular mask to remove black background"""
@@ -2879,7 +3015,119 @@ class DJController:
         cv2.ellipse(overlay, (x + width - radius, y + height - radius), (radius, radius), 0, 0, 90, color, thickness)
         # Bottom-left corner
         cv2.ellipse(overlay, (x + radius, y + height - radius), (radius, radius), 90, 0, 90, color, thickness)
-
+    
+    def _draw_expanded_hit_area_feedback(self, overlay):
+        """Draw subtle visual feedback showing expanded hit areas for better user understanding"""
+        # Only show feedback with very low opacity so it's not distracting
+        feedback_alpha = 0.15  # Very subtle
+        
+        # Determine edge areas where extra large hit areas are used
+        edge_margin = 200
+        
+        # Draw expanded hit areas for all interactive buttons
+        for deck_buttons in [self.deck1_buttons, self.deck2_buttons]:
+            for button in deck_buttons.values():
+                if button.button_type == "display":  # Skip non-clickable buttons
+                    continue
+                    
+                # Check if button is in edge area
+                button_center_x = button.x + button.width // 2
+                button_center_y = button.y + button.height // 2
+                in_edge_area = (button_center_x < edge_margin or button_center_x > self.screen_width - edge_margin or 
+                               button_center_y < edge_margin or button_center_y > self.screen_height - edge_margin)
+                
+                if button.name in ["Cue", "Play/Pause"]:
+                    # Draw expanded circular hit area
+                    center_x = button.x + 75
+                    center_y = button.y + 75
+                    
+                    if in_edge_area:
+                        expanded_radius = 110  # Matches collision detection
+                        feedback_color = (0, 255, 255)  # Cyan for edge areas
+                    else:
+                        expanded_radius = 95   # Matches collision detection
+                        feedback_color = (0, 200, 255)  # Light blue for center areas
+                    
+                    # Draw very subtle circle outline showing expanded hit area
+                    cv2.circle(overlay, (center_x, center_y), expanded_radius, feedback_color, 2)
+                    
+                    # Draw original button area in different color for comparison
+                    cv2.circle(overlay, (center_x, center_y), 75, (255, 255, 255), 1)
+                    
+                else:
+                    # Draw expanded rectangular hit area for pads
+                    if in_edge_area:
+                        margin = 30  # Matches collision detection
+                        feedback_color = (255, 255, 0)  # Yellow for edge areas
+                    else:
+                        margin = 20  # Matches collision detection
+                        feedback_color = (255, 200, 0)  # Orange for center areas
+                    
+                    # Draw expanded hit area rectangle
+                    expanded_x = button.x - margin
+                    expanded_y = button.y - margin
+                    expanded_width = button.width + (margin * 2)
+                    expanded_height = button.height + (margin * 2)
+                    
+                    # Draw very subtle rectangle outline showing expanded hit area
+                    cv2.rectangle(overlay, (expanded_x, expanded_y), 
+                                 (expanded_x + expanded_width, expanded_y + expanded_height), 
+                                 feedback_color, 2)
+                    
+                    # Draw original button area in different color for comparison
+                    cv2.rectangle(overlay, (button.x, button.y), 
+                                 (button.x + button.width, button.y + button.height), 
+                                 (255, 255, 255), 1)
+        
+        # Draw expanded hit areas for faders with similar feedback
+        for fader in [self.volume_fader_1, self.volume_fader_2]:
+            # Check if fader is in edge area
+            fader_center_x = fader.x + fader.width // 2
+            fader_center_y = fader.y + fader.height // 2
+            in_edge_area = (fader_center_x < edge_margin or fader_center_x > self.screen_width - edge_margin or 
+                           fader_center_y < edge_margin or fader_center_y > self.screen_height - edge_margin)
+            
+            if in_edge_area:
+                margin = 35  # Matches collision detection
+                feedback_color = (0, 255, 0)  # Green for edge areas
+            else:
+                margin = 25  # Matches collision detection
+                feedback_color = (0, 200, 0)  # Light green for center areas
+            
+            # Draw expanded hit area rectangle for faders
+            expanded_x = fader.x - margin
+            expanded_y = fader.y - margin
+            expanded_width = fader.width + (margin * 2)
+            expanded_height = fader.height + (margin * 2)
+            
+            # Draw very subtle rectangle outline
+            cv2.rectangle(overlay, (expanded_x, expanded_y), 
+                         (expanded_x + expanded_width, expanded_y + expanded_height), 
+                         feedback_color, 1)
+        
+        # Draw expanded hit area for crossfader
+        crossfader_center_x = self.crossfader.x + self.crossfader.width // 2
+        crossfader_center_y = self.crossfader.y + self.crossfader.height // 2
+        in_edge_area = (crossfader_center_x < edge_margin or crossfader_center_x > self.screen_width - edge_margin or 
+                       crossfader_center_y < edge_margin or crossfader_center_y > self.screen_height - edge_margin)
+        
+        if in_edge_area:
+            margin = 35
+            feedback_color = (255, 0, 255)  # Magenta for edge areas
+        else:
+            margin = 25
+            feedback_color = (200, 0, 255)  # Purple for center areas
+        
+        # Draw expanded hit area for crossfader
+        expanded_x = self.crossfader.x - margin
+        expanded_y = self.crossfader.y - margin
+        expanded_width = self.crossfader.width + (margin * 2)
+        expanded_height = self.crossfader.height + (margin * 2)
+        
+        cv2.rectangle(overlay, (expanded_x, expanded_y), 
+                     (expanded_x + expanded_width, expanded_y + expanded_height), 
+                     feedback_color, 1)
+    
     def draw_controller_overlay(self, frame):
         """Draw the DJ controller overlay on the frame"""
         overlay = frame.copy()
@@ -2927,7 +3175,11 @@ class DJController:
                         self._draw_button_ring(overlay, center_x, center_y, radius, ring_color, 4)
                 else:
                     # Draw clean rounded pads - 25px corner radius like real DJ controllers
-                    pad_color = (34, 34, 34)  # Hex #222222 in BGR
+                    # Use lighter grey when pad is pressed/active for better visual feedback
+                    if button.is_active or button.is_pressed:
+                        pad_color = (60, 60, 60)  # Lighter grey when active/pressed
+                    else:
+                        pad_color = (34, 34, 34)  # Original hex #222222 in BGR when inactive
                     corner_radius = 25
                      
                     # Draw filled rounded rectangle - clean solid pad with rounded corners
@@ -3071,6 +3323,9 @@ class DJController:
         
         # EQ knobs removed for cleaner interface
         
+        # Visual feedback for expanded hit areas (disabled for now)
+        # self._draw_expanded_hit_area_feedback(overlay)
+        
         # Blend overlay with original frame
         cv2.addWeighted(overlay, self.overlay_alpha, frame, 1 - self.overlay_alpha, 0, frame)
         
@@ -3195,7 +3450,7 @@ class DJController:
         i_love_it = "Icona Pop - I Love It (Feat. Charli XCX)"
         die_young = "Kesha - Die Young"
         no_hands = "Waka Flocka Flame - No Hands (feat. Roscoe Dash and Wale)"
-        sushi_dont_lie = "揽佬 SKAI ISYOURGOD八方来财因果"
+        sushi_dont_lie = "SKAIISYOURGOD"
         sexy_bitch = "David Guetta - Sexy Bitch (feat. Akon)"
         heads_will_roll = "Heads Will Roll (A-Trak Remix Radio Edit)"
         fukumean = "Gunna - fukumean"
@@ -3206,9 +3461,11 @@ class DJController:
         newjeans = "NewJeans 'New Jeans (ft. The Powerpuff Girls)' (뉴진스 New Jeans 가사)"
         clarity = "Zedd feat. Foxes - Clarity"
         long_time = "Long Time (Intro)"
+        bank_account = "21 Savage - Bank Account"
+        what_is_love = "TWICE - What is Love"
         
-        DECK1_SONG = no_broke_boys
-        DECK2_SONG = no_broke_boys  
+        DECK1_SONG = mcdonalds
+        DECK2_SONG = no_pole  
         
         # Scan available tracks
         self.track_loader.scan_tracks()
@@ -3263,11 +3520,19 @@ class DJController:
         # Auto BPM Sync - Calculate average BPM and sync both decks
         self._auto_bpm_sync()
         
+        # Display final BPM status
+        self.print_bpm_status()
+        
         print("✅ Track loading complete!")
         print()
     
     def _auto_bpm_sync(self):
         """Automatically sync both decks to the average BPM of the loaded tracks"""
+        if not self.enable_bpm_sync:
+            print("🔄 BPM Sync: DISABLED - Tracks will play at original BPM")
+            print("   📊 To enable sync, restart without 'unsync' command")
+            return
+            
         if not self.deck1_track or not self.deck2_track:
             print("⚠️ BPM Sync: Need both tracks loaded")
             return
@@ -3316,34 +3581,104 @@ class DJController:
         actual_deck1_bpm = deck1_bpm * deck1_tempo_ratio
         actual_deck2_bpm = deck2_bpm * deck2_tempo_ratio
         
-        # Print sync information
-        print(f"🎵 AUTO BPM SYNC APPLIED:")
-        print(f"   📊 Target BPM: {average_bpm}")
-        print(f"   🎚️ Deck 1: {deck1_bpm} → {actual_deck1_bpm:.1f} BPM (tempo: {deck1_tempo_ratio:.3f})")
-        print(f"   🎚️ Deck 2: {deck2_bpm} → {actual_deck2_bpm:.1f} BPM (tempo: {deck2_tempo_ratio:.3f})")
-        print(f"   ✅ Both tracks now synced to {average_bpm} BPM")
+        # Print comprehensive sync information
+        print("=" * 60)
+        print("🎵 AUTO BPM SYNC APPLIED")
+        print("=" * 60)
+        print(f"📊 SYNC TARGET: {average_bpm} BPM (average of both tracks)")
+        print()
+        print("🎚️ DECK 1 BPM DETAILS:")
+        print(f"   📀 Track: {self.deck1_track.name}")
+        print(f"   🎵 Original BPM: {deck1_bpm}")
+        print(f"   ⚡ Tempo Multiplier: {deck1_tempo_ratio:.3f}x ({((deck1_tempo_ratio-1)*100):+.1f}%)")
+        print(f"   🎯 Synced BPM: {actual_deck1_bpm:.1f}")
+        print()
+        print("🎚️ DECK 2 BPM DETAILS:")
+        print(f"   📀 Track: {self.deck2_track.name}")
+        print(f"   🎵 Original BPM: {deck2_bpm}")
+        print(f"   ⚡ Tempo Multiplier: {deck2_tempo_ratio:.3f}x ({((deck2_tempo_ratio-1)*100):+.1f}%)")
+        print(f"   🎯 Synced BPM: {actual_deck2_bpm:.1f}")
+        print()
+        print(f"✅ RESULT: Both tracks now playing at {average_bpm} BPM")
+        print("=" * 60)
+        print()
+    
+    def print_bpm_status(self):
+        """Print current BPM status for both decks"""
+        print()
+        print("=" * 50)
+        print("🎵 CURRENT BPM STATUS")
+        print("=" * 50)
+        
+        if self.deck1_track:
+            current_tempo_1 = self.audio_engine.get_tempo_multiplier(1)
+            original_bpm_1 = self.deck1_track.bpm
+            current_bpm_1 = original_bpm_1 * current_tempo_1
+            print(f"🎚️ DECK 1: {self.deck1_track.name}")
+            print(f"   🎵 Original BPM: {original_bpm_1}")
+            print(f"   ⚡ Current Tempo: {current_tempo_1:.3f}x ({((current_tempo_1-1)*100):+.1f}%)")
+            print(f"   🎯 Current BPM: {current_bpm_1:.1f}")
+            print(f"   ▶️ Playing: {'YES' if self.audio_engine.deck1_is_playing else 'NO'}")
+        else:
+            print("🎚️ DECK 1: No track loaded")
+        
+        print()
+        
+        if self.deck2_track:
+            current_tempo_2 = self.audio_engine.get_tempo_multiplier(2)
+            original_bpm_2 = self.deck2_track.bpm
+            current_bpm_2 = original_bpm_2 * current_tempo_2
+            print(f"🎚️ DECK 2: {self.deck2_track.name}")
+            print(f"   🎵 Original BPM: {original_bpm_2}")
+            print(f"   ⚡ Current Tempo: {current_tempo_2:.3f}x ({((current_tempo_2-1)*100):+.1f}%)")
+            print(f"   🎯 Current BPM: {current_bpm_2:.1f}")
+            print(f"   ▶️ Playing: {'YES' if self.audio_engine.deck2_is_playing else 'NO'}")
+        else:
+            print("🎚️ DECK 2: No track loaded")
+        
+        print()
+        
+        if self.deck1_track and self.deck2_track:
+            current_bpm_1 = self.deck1_track.bpm * self.audio_engine.get_tempo_multiplier(1)
+            current_bpm_2 = self.deck2_track.bpm * self.audio_engine.get_tempo_multiplier(2)
+            bpm_difference = abs(current_bpm_1 - current_bpm_2)
+            
+            if not self.enable_bpm_sync:
+                print(f"🔄 SYNC STATUS: DISABLED - Tracks at original BPM")
+            else:
+                sync_status = "SYNCED" if bpm_difference < 1.0 else f"DIFF: {bpm_difference:.1f} BPM"
+                print(f"🔄 SYNC STATUS: {sync_status}")
+        
+        print("=" * 50)
         print()
 
     def _find_track_by_name(self, song_name: str):
         """Find a track by its folder name (exact match or partial match)"""
+        import unicodedata
         print(f"🔍 Looking for: '{song_name}'")
         
-        # First try exact match
+        # Normalize Unicode strings to handle composed vs decomposed forms
+        normalized_song_name = unicodedata.normalize('NFC', song_name)
+        
+        # First try exact match with Unicode normalization
         for track in self.track_loader.available_tracks:
-            if track.name == song_name:
+            normalized_track_name = unicodedata.normalize('NFC', track.name)
+            if normalized_track_name == normalized_song_name:
                 print(f"✅ Exact match found: '{track.name}'")
                 return track
         
-        # Then try partial match (contains)
+        # Then try partial match (contains) with Unicode normalization
         for track in self.track_loader.available_tracks:
-            if song_name.lower() in track.name.lower():
+            normalized_track_name = unicodedata.normalize('NFC', track.name)
+            if normalized_song_name.lower() in normalized_track_name.lower():
                 print(f"✅ Partial match found: '{track.name}'")
                 return track
         
-        # Special handling for complex names (NewJeans, special characters)
-        if 'newjeans' in song_name.lower():
+        # Special handling for complex names with Unicode normalization
+        if 'newjeans' in normalized_song_name.lower():
             for track in self.track_loader.available_tracks:
-                track_lower = track.name.lower()
+                normalized_track_name = unicodedata.normalize('NFC', track.name)
+                track_lower = normalized_track_name.lower()
                 if any(keyword in track_lower for keyword in ['newjeans', 'new jeans', '뉴진스']):
                     print(f"✅ NewJeans match found: '{track.name}'")
                     return track
@@ -3367,6 +3702,8 @@ class DJController:
             self.visualizer.set_track_waveform(1, track)
             # Set cue point at beginning (professional default)
             self.audio_engine.set_cue_point(1, 0.0)
+            # Load album artwork for jog wheel
+            self._load_album_artwork(1, track)
             # Set default buttons active - both vocal and instrumental ON
             self.deck1_buttons["vocal"].is_active = True
             self.deck1_buttons["instrumental"].is_active = True
@@ -3380,12 +3717,75 @@ class DJController:
             self.visualizer.set_track_waveform(2, track)
             # Set cue point at beginning (professional default)
             self.audio_engine.set_cue_point(2, 0.0)
+            # Load album artwork for jog wheel
+            self._load_album_artwork(2, track)
             # Set default buttons active - both vocal and instrumental ON
             self.deck2_buttons["vocal"].is_active = True
             self.deck2_buttons["instrumental"].is_active = True
             # Ensure audio engine reflects these settings properly
             self.audio_engine.set_stem_volume(2, "vocals", 1.0)
             self.audio_engine.set_stem_volume(2, "instrumental", 1.0)
+    
+    def _load_album_artwork(self, deck: int, track):
+        """Load and prepare album artwork for jog wheel display"""
+        if track.album_artwork and os.path.exists(track.album_artwork):
+            try:
+                # Load the image
+                artwork = cv2.imread(track.album_artwork, cv2.IMREAD_COLOR)
+                if artwork is not None:
+                    # Resize to 210px diameter (as requested)
+                    artwork_resized = cv2.resize(artwork, (210, 210))
+                    
+                    # Store in appropriate deck variable
+                    if deck == 1:
+                        self.deck1_artwork_image = artwork_resized
+                        self.deck1_artwork_rotation = 0.0  # Reset to default position
+                        print(f"🎨 Loaded album artwork for Deck 1: {os.path.basename(track.album_artwork)}")
+                    elif deck == 2:
+                        self.deck2_artwork_image = artwork_resized
+                        self.deck2_artwork_rotation = 0.0  # Reset to default position
+                        print(f"🎨 Loaded album artwork for Deck 2: {os.path.basename(track.album_artwork)}")
+                else:
+                    print(f"⚠️ Failed to load album artwork: {track.album_artwork}")
+                    if deck == 1:
+                        self.deck1_artwork_image = None
+                    elif deck == 2:
+                        self.deck2_artwork_image = None
+            except Exception as e:
+                print(f"❌ Error loading album artwork: {e}")
+                if deck == 1:
+                    self.deck1_artwork_image = None
+                elif deck == 2:
+                    self.deck2_artwork_image = None
+        else:
+            # No album artwork available
+            if deck == 1:
+                self.deck1_artwork_image = None
+                self.deck1_artwork_rotation = 0.0
+            elif deck == 2:
+                self.deck2_artwork_image = None  
+                self.deck2_artwork_rotation = 0.0
+            print(f"📀 No album artwork found for Deck {deck} - jog wheel will remain blank")
+    
+    def update_album_artwork_rotation(self):
+        """Update album artwork rotation based on playback state - like real DJ controllers"""
+        # Deck 1 album artwork rotation
+        if self.audio_engine.deck1_is_playing:
+            # Rotate CLOCKWISE at DOUBLE speed when playing (like real DJ controllers)
+            # About 66.6 RPM like a fast spinning record - negative values for clockwise rotation
+            rotation_speed = -4.0  # degrees per frame (negative = clockwise, doubled from -2.0)
+            self.deck1_artwork_rotation += rotation_speed
+            if self.deck1_artwork_rotation <= -360.0:
+                self.deck1_artwork_rotation += 360.0
+        # When paused/stopped, rotation stays at current position
+        
+        # Deck 2 album artwork rotation
+        if self.audio_engine.deck2_is_playing:
+            rotation_speed = -4.0  # degrees per frame (negative = clockwise, doubled from -2.0)
+            self.deck2_artwork_rotation += rotation_speed
+            if self.deck2_artwork_rotation <= -360.0:
+                self.deck2_artwork_rotation += 360.0
+        # When paused/stopped, rotation stays at current position
     
     def run(self):
         """Main loop for the DJ controller"""
@@ -3422,6 +3822,9 @@ class DJController:
                 
                 # Update jog wheel spinning based on playback state (realistic DJ behavior)
                 self.update_jog_wheel_spinning()
+                
+                # Update album artwork rotation based on playback state (like real DJ controllers)
+                self.update_album_artwork_rotation()
                 
                 # Draw controller overlay
                 frame = self.draw_controller_overlay(frame)

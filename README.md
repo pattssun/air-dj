@@ -25,7 +25,7 @@ Control a DJ interface using hand gestures through your webcam.
 ### Prerequisites
 - Python 3.8+
 - Webcam
-- Audio files with stems (see Audio Setup below)
+- Audio files with stems (see installation step 4 below)
 
 ### Installation
 
