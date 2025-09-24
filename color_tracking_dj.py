@@ -6,6 +6,7 @@ from pyo import Server, SndTable, TableRead, Sine, SfPlayer, Harmonizer, Biquad,
 import time
 import sys
 import os
+from iphone_camera_integration import create_optimized_camera_capture
 
 class SimpleHandDJ:
     """
@@ -42,12 +43,13 @@ class SimpleHandDJ:
         self.pitch_history = [0] * 2     # Reduced from 5 to 2 for instant response
         self.volume_history = [0.5] * 2  # Reduced from 5 to 2 for instant response
         
-        # Video capture setup
-        self.cap = cv2.VideoCapture(0)
+        # Video capture setup with Continuity Camera optimization
+        print("🎥 Setting up camera for Color Tracking DJ...")
+        self.cap = create_optimized_camera_capture()
         ret, frame = self.cap.read()
         
         if not ret:
-            raise Exception("Could not access webcam. Please check your camera connection.")
+            raise Exception("Could not access camera. Please check your camera connection and Continuity Camera setup.")
         
         self.frame_height, self.frame_width = frame.shape[:2]
         print(f"Camera resolution: {self.frame_width}x{self.frame_height}")

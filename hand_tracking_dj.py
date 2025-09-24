@@ -10,6 +10,7 @@ from pyo import *
 import threading
 import queue
 import random
+from iphone_camera_integration import create_optimized_camera_capture
 
 # Import specific pyo modules for better clarity
 from pyo import Server, SndTable, TableRead, Sine, SfPlayer, Harmonizer, STRev, Mix, SigTo, Sig, PeakAmp
@@ -66,8 +67,9 @@ class HandDJ:
         self.pitch_history = [0] * 2     # Reduced from 5 to 2 for instant response
         self.volume_history = [5.0] * 2  # Reduced from 5 to 2 for instant response
         
-        # Video capture setup
-        self.cap = cv2.VideoCapture(0)
+        # Video capture setup with Continuity Camera optimization
+        print("🎥 Setting up camera for Hand DJ...")
+        self.cap = create_optimized_camera_capture()
         
         # Check if camera is opened correctly
         if not self.cap.isOpened():

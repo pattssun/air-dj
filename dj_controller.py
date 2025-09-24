@@ -1796,14 +1796,24 @@ class DJController:
         self.jog_last_angle = 0.0  # Last touch angle for calculating rotation
         self.jog_rotation_speed = 0.0  # Current rotation speed for scratching
         
-        # Video capture with ultra-low latency optimizations
-        self.cap = cv2.VideoCapture(0)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.screen_width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.screen_height)
-        # Ultra-low latency camera optimizations
-        self.cap.set(cv2.CAP_PROP_FPS, 60)           # Request highest FPS
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)     # Minimal buffer for instant frames
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))  # Fast codec
+        # Video capture with DJ-optimized camera wrapper
+        print("🎥 Setting up DJ-optimized camera...")
+        try:
+            from iphone_camera_integration import create_dj_camera
+            self.dj_camera = create_dj_camera()
+            # For compatibility with existing code that expects self.cap
+            self.cap = self.dj_camera.cap
+        except ImportError:
+            print("⚠️  DJ Camera module not available, using basic setup")
+            self.cap = cv2.VideoCapture(0)
+            self.dj_camera = None
+            
+            # Basic camera configuration if wrapper not available
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.screen_width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.screen_height)
+            self.cap.set(cv2.CAP_PROP_FPS, 60)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
     
     def setup_controller_layout(self):
         """Setup the DJ controller layout matching the screenshot"""
@@ -3811,15 +3821,39 @@ class DJController:
         # Load default tracks
         self.load_default_tracks()
         
+        # Frame rate synchronization for smooth 60fps operation
+        self.target_fps = 60.0
+        self.frame_time = 1.0 / self.target_fps  # 16.67ms per frame at 60fps
+        self.last_frame_time = time.time()
+        self.frame_count = 0
+        self.fps_start_time = time.time()
+        self.actual_fps = 60.0
+        
+        print(f"🎬 Synchronizing to {self.target_fps}fps for ultra-smooth operation")
+        
+        # Animation controller will be initialized after deck setup
+        
         try:
             while True:
-                ret, frame = self.cap.read()
+                # Use DJ camera wrapper if available, otherwise fallback to basic capture
+                if hasattr(self, 'dj_camera') and self.dj_camera:
+                    ret, frame = self.dj_camera.read_frame()
+                else:
+                    ret, frame = self.cap.read()
+                    # Apply manual horizontal flip if using basic capture
+                    if ret and frame is not None:
+                        frame = cv2.flip(frame, 1)
+                
                 if not ret:
                     print("Failed to capture frame")
                     break
                 
-                # Flip frame horizontally for mirror effect
-                frame = cv2.flip(frame, 1)
+                # Ensure frame is exactly the right size for UI layout
+                if frame.shape[:2] != (self.screen_height, self.screen_width):
+                    frame = cv2.resize(frame, (self.screen_width, self.screen_height))
+                
+                # Frame is already flipped by DJ camera wrapper or manual flip above
+                # No additional flip needed
                 
                 # Process hand tracking - get both pinch types
                 pinch_data, jog_pinch_data, results = self.hand_tracker.process_frame(frame)
@@ -3832,6 +3866,23 @@ class DJController:
                 
                 # Update album artwork rotation based on playback state (like real DJ controllers)
                 self.update_album_artwork_rotation()
+                
+                # Update smooth animations for 60fps synchronization
+                if hasattr(self, 'animation_controller') and self.animation_controller:
+                    deck_states = {
+                        'deck1_playing': hasattr(self, 'deck1_playing') and self.deck1_playing,
+                        'deck2_playing': hasattr(self, 'deck2_playing') and self.deck2_playing,
+                        'deck1_position': getattr(self, 'deck1_position', 0.0),
+                        'deck2_position': getattr(self, 'deck2_position', 0.0),
+                        'deck1_bpm': 128,  # Will be updated with actual BPM
+                        'deck2_bpm': 126,  # Will be updated with actual BPM
+                        'deck1_volume': getattr(self, 'deck1_master_volume', 0.0),
+                        'deck2_volume': getattr(self, 'deck2_master_volume', 0.0)
+                    }
+                    self.animation_controller.update(deck_states)
+                
+                # Record performance metrics
+                frame_start_time = current_time if 'current_time' in locals() else time.time()
                 
                 # Draw controller overlay
                 frame = self.draw_controller_overlay(frame)
@@ -3927,10 +3978,54 @@ class DJController:
                 viz_frame = self.create_track_visualization_window()
                 cv2.imshow('Track Visualization', viz_frame)
                 
-                # Handle key presses
-                key = cv2.waitKey(1) & 0xFF  # Reduced from 5ms to 1ms for ultra-low latency
+                # Frame rate synchronization - maintain exact 60fps
+                frame_end_time = time.time()
+                frame_processing_time = frame_end_time - frame_start_time
+                
+                elapsed_time = frame_end_time - self.last_frame_time
+                
+                # Record performance data
+                if hasattr(self, 'performance_monitor') and self.performance_monitor:
+                    self.performance_monitor.record_frame_time(elapsed_time)
+                
+                # Calculate sleep time to maintain 60fps
+                sleep_time = self.frame_time - elapsed_time
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                
+                # Update frame timing
+                self.last_frame_time = time.time()
+                self.frame_count += 1
+                
+                # Calculate and report actual FPS
+                if self.frame_count % 60 == 0:  # Every 60 frames (1 second at 60fps)
+                    fps_elapsed = frame_end_time - self.fps_start_time
+                    if fps_elapsed > 0:
+                        self.actual_fps = 60.0 / fps_elapsed
+                        self.fps_start_time = frame_end_time
+                
+                # Report performance stats periodically
+                if hasattr(self, 'performance_monitor') and self.performance_monitor and self.performance_monitor.should_report():
+                    stats = self.performance_monitor.get_performance_stats()
+                    print(f"🎬 Performance: {stats['avg_fps']:.1f}fps avg, "
+                          f"{stats['frame_time_ms']:.1f}ms frame time, "
+                          f"Processing: {frame_processing_time*1000:.1f}ms")
+                
+                # Handle key presses with frame-synchronized timing
+                key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
                     break
+                elif key == ord('f'):  # Press 'f' to show FPS debug info
+                    if hasattr(self, 'performance_monitor') and self.performance_monitor:
+                        stats = self.performance_monitor.get_performance_stats()
+                        print(f"🎬 FPS Debug: Target={self.target_fps:.1f}, "
+                              f"Actual={self.actual_fps:.1f}, "
+                              f"Avg={stats['avg_fps']:.1f}, "
+                              f"Range={stats['min_fps']:.1f}-{stats['max_fps']:.1f}")
+                    else:
+                        print(f"🎬 FPS Debug: Target={self.target_fps:.1f}, Actual={self.actual_fps:.1f}")
+                elif key == ord('s'):  # Press 's' to show smooth animation status
+                    print(f"✨ Animation Status: Jog wheels, album art, and UI synchronized to {self.target_fps}fps")
                     
         except KeyboardInterrupt:
             print("\nShutting down...")
