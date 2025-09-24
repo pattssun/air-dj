@@ -36,7 +36,7 @@ Control a DJ interface using hand gestures through your webcam.
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/air-dj.git
+   git clone https://github.com/pattssun/air-dj.git
    cd air-dj
    ```
 
@@ -55,7 +55,7 @@ Control a DJ interface using hand gestures through your webcam.
 
 1. **Clone the repository:**
    ```cmd
-   git clone https://github.com/yourusername/air-dj.git
+   git clone https://github.com/pattssun/air-dj.git
    cd air-dj
    ```
 
