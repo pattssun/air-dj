@@ -69,6 +69,12 @@ songs/**/*.jpeg
 !songs/.gitkeep
 !songs/MUSIC_SETUP.md
 
+# Include copyright-free example songs for users
+!songs/Copyright\ free\ 1/
+!songs/Copyright\ free\ 1/**
+!songs/Copyright\ free\ 2/
+!songs/Copyright\ free\ 2/**
+
 # Audio cache
 *.cache
 *.tmp

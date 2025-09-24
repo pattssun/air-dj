@@ -3474,8 +3474,8 @@ class DJController:
             print(f"🎵 DECK 2: {DECK2_SONG}")
         else:
             # Use default hardcoded songs
-            DECK1_SONG = "Kesha - Die Young"
-            DECK2_SONG = "Avicii - Levels"
+            DECK1_SONG = "Copyright free 1"
+            DECK2_SONG = "Copyright free 2"
             print(f"🎵 Using default songs: {DECK1_SONG} & {DECK2_SONG}")
         
         # Load specific songs if specified
