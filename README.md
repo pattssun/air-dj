@@ -1,6 +1,6 @@
 # 🎧 Air DJ
 
-Control a DJ interface using hand gestures through your webcam.
+Control a DJ interface using hand gestures through your webcam. **[Watch demo on Twitter/X →](https://x.com/pattssun/status/1971347517599293892)**.
 
 ## Key Features
 
