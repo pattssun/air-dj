@@ -10,7 +10,7 @@ import argparse
 import random
 
 def get_available_songs():
-    """Get list of available songs from songs folder"""
+    """Get list of available songs from songs folder with required stem files"""
     songs_folder = "songs"
     available_songs = []
     
@@ -21,10 +21,27 @@ def get_available_songs():
     # Get all directories (stem folders) in songs folder
     for item in sorted(os.listdir(songs_folder)):
         item_path = os.path.join(songs_folder, item)
-        if os.path.isdir(item_path):
+        
+        # Only check directories, skip files and special items
+        if not os.path.isdir(item_path):
+            continue
+            
+        # Check if the directory contains required vocal and instrumental files
+        if has_required_stems(item_path):
             available_songs.append(item)
     
     return available_songs
+
+def has_required_stems(song_path):
+    """Check if a song directory has the required Vocals and Instrumental files"""
+    try:
+        files = os.listdir(song_path)
+        has_vocals = any(file.lower().startswith('vocals') and file.lower().endswith(('.mp3', '.wav', '.flac', '.m4a', '.aac')) for file in files)
+        has_instrumental = any(file.lower().startswith('instrumental') and file.lower().endswith(('.mp3', '.wav', '.flac', '.m4a', '.aac')) for file in files)
+        
+        return has_vocals and has_instrumental
+    except (OSError, PermissionError):
+        return False
 
 def interactive_song_selection():
     """Interactive song selection menu"""
