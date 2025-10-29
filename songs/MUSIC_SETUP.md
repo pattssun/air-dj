@@ -62,7 +62,7 @@ songs/
 python air_dj.py
 ```
 
-The repository includes 2 copyright-free example songs so you can test Air DJ right away!
+The repository includes 2 copyright-free example songs so you can test Air DJ right away
 
 **Add your own music:**
 Once you add your own stem-separated songs to this folder, they'll appear in the selection menu alongside the examples.
