@@ -55,7 +55,7 @@ songs/
 - **Poor audio quality?** Use higher bitrate source files for stem separation
 - **Stems not isolating properly?** Some songs work better with different AI models
 
-## **Ready to DJ!**
+## **Ready to DJ**
 
 **Try it immediately with included songs:**
 ```bash
