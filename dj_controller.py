@@ -1669,16 +1669,51 @@ class TrackLoader:
         
         pass  # Silently scan tracks
     
+    def _extract_bpm_from_folder_name(self, folder_name: str) -> Optional[int]:
+        """Extract BPM from folder name if present in brackets, e.g., '(150 bpm)' or '(157bpm)'"""
+        import re
+        # Look for patterns like "(150 bpm)", "(157bpm)", "(120 BPM)", etc.
+        patterns = [
+            r'\((\d+)\s*bpm\)',  # (150 bpm) or (157bpm)
+            r'\[(\d+)\s*bpm\]',  # [150 bpm] or [157bpm]
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, folder_name, re.IGNORECASE)
+            if match:
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    pass
+        return None
+    
+    def _detect_bpm_from_audio(self, audio_file: str) -> Optional[int]:
+        """Detect BPM from audio file using librosa"""
+        if not AUDIO_ANALYSIS_AVAILABLE:
+            return None
+        try:
+            audio_data, sample_rate = librosa.load(audio_file, sr=44100)
+            tempo, _ = librosa.beat.beat_track(y=audio_data, sr=sample_rate)
+            return int(round(tempo))
+        except Exception as e:
+            print(f"   ⚠️ BPM detection failed for {audio_file}: {e}")
+            return None
+    
     def _parse_stem_folder(self, folder_name: str, folder_path: str) -> Optional[Track]:
         """Parse a stem folder and create a Track object"""
         # Look for stem files and album artwork
         stems = {}
-        bpm = 120  # Default BPM
+        bpm = None  # Will be determined
         key = "C"  # Default key
         album_artwork = None
         
+        # Step 1: Try to extract BPM from folder name first (highest priority)
+        bpm = self._extract_bpm_from_folder_name(folder_name)
+        if bpm:
+            print(f"   🎵 BPM from folder name: {bpm}")
+        
         # Expected stem types
         stem_types = ["vocals", "instrumental", "drums", "bass", "other"]
+        first_audio_file = None  # Store first audio file for BPM detection fallback
         
         for file in os.listdir(folder_path):
             file_path = os.path.join(folder_path, file)
@@ -1691,23 +1726,45 @@ class TrackLoader:
             
             # Check for stem files
             elif file.lower().endswith(('.mp3', '.wav')):
+                # Store first audio file for BPM detection if needed
+                if first_audio_file is None:
+                    first_audio_file = file_path
+                
                 # Try to identify stem type from filename
                 file_lower = file.lower()
                 for stem_type in stem_types:
                     if stem_type in file_lower:
                         stems[stem_type] = file_path
                         
-                        # Try to extract BPM and key from filename
+                        # Step 2: Try to extract BPM and key from filename (if not already found)
+                        if bpm is None:
+                            parts = file.split(' - ')
+                            for part in parts:
+                                if 'bpm' in part.lower():
+                                    try:
+                                        bpm = int(''.join(filter(str.isdigit, part)))
+                                        print(f"   🎵 BPM from filename: {bpm}")
+                                    except:
+                                        pass
+                        # Extract key from filename
                         parts = file.split(' - ')
                         for part in parts:
-                            if 'bpm' in part.lower():
-                                try:
-                                    bpm = int(''.join(filter(str.isdigit, part)))
-                                except:
-                                    pass
                             if any(note in part for note in ['A', 'B', 'C', 'D', 'E', 'F', 'G']) and ('maj' in part or 'min' in part):
                                 key = part
+                                break
                         break
+        
+        # Step 3: If BPM still not found, detect from audio using librosa
+        if bpm is None and first_audio_file:
+            print(f"   🔄 Detecting BPM from audio...")
+            bpm = self._detect_bpm_from_audio(first_audio_file)
+            if bpm:
+                print(f"   🎵 BPM detected from audio: {bpm}")
+        
+        # Fallback to default BPM if still not found
+        if bpm is None:
+            bpm = 120
+            print(f"   ⚠️ Using default BPM: {bpm}")
         
         # Only create track if we have at least some stems
         if stems:
