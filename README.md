@@ -20,6 +20,23 @@ Control a DJ interface using hand gestures through your webcam.
 - **Stem Status Display**: Visual confirmation of vocal/instrumental state
 - **Independent Visualization**: Each deck shows separate progress
 
+### **Keyboard Controls (always on, alongside hand tracking)**
+Practice or perform mashups without leaving the camera. Press `/` in-app to
+toggle the on-screen cheat sheet.
+
+| Action | Deck 1 | Deck 2 |
+|---|---|---|
+| Cue | `Q` | `P` |
+| Play / Pause | `A` | `;` |
+| Vocal toggle | `W` | `O` |
+| Instrumental toggle | `E` | `I` |
+| Tempo + / − | `R` / `G` | `U` / `J` |
+| Seek − / + | `S` / `D` | `K` / `L` |
+| Master volume + / − | `1` / `2` | `9` / `0` |
+| Set cue point at current position | `Shift+Q` | `Shift+P` |
+
+Crossfader: `←` / `→` move it, `↓` recenters. `Esc` quits.
+
 ## Quick Start
 
 ### Prerequisites

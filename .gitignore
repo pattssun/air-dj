@@ -29,6 +29,11 @@ venv_py*/
 env/
 ENV/
 
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
 # IDEs
 .vscode/
 .idea/

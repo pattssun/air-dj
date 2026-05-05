@@ -1831,6 +1831,7 @@ class DJController:
         self.current_pinches = []
         self.deck1_track = None
         self.deck2_track = None
+        self.show_keymap = False  # toggled by `/` or `?` — see _draw_keymap_overlay
         
         # Jog wheel rotation states
         self.deck1_jog_rotation = 0.0  # Current rotation angle in degrees
@@ -2289,6 +2290,102 @@ class DJController:
         cv2.putText(overlay, f"{vocal2_status} | {inst2_status}", (deck2_x, deck2_y + bar_height + 40), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
     
+    # Keyboard control: mirrors hand-gesture actions for off-camera mashup rehearsal.
+    # Press `/` in-app to toggle the on-screen keymap. See _draw_keymap_overlay.
+    KEY_TEMPO_STEP = 0.025      # 1 unit ≈ ±1 % BPM (fader maps 0–1 to 0.8–1.2x)
+    KEY_VOLUME_STEP = 0.05
+    KEY_CROSSFADER_STEP = 0.05
+    KEY_SEEK_SECONDS = 0.1      # per key press; held key auto-repeats via OS
+
+    def _handle_keyboard(self, key: int) -> bool:
+        """Route a keypress to AudioEngine actions. Returns True to request quit."""
+        if key < 0:
+            return False
+
+        # Global
+        if key == 27:  # Esc
+            return True
+        if key in (ord('/'), ord('?')):
+            self.show_keymap = not getattr(self, 'show_keymap', False)
+            return False
+        if key == ord('f'):
+            stats = (self.performance_monitor.get_performance_stats()
+                     if getattr(self, 'performance_monitor', None) else None)
+            if stats:
+                print(f"🎬 FPS Debug: Target={self.target_fps:.1f}, Actual={self.actual_fps:.1f}, "
+                      f"Avg={stats['avg_fps']:.1f}, Range={stats['min_fps']:.1f}-{stats['max_fps']:.1f}")
+            else:
+                print(f"🎬 FPS Debug: Target={self.target_fps:.1f}, Actual={self.actual_fps:.1f}")
+            return False
+        if key == ord('`'):
+            print(f"✨ Animation Status: synchronized to {self.target_fps}fps")
+            return False
+
+        # Crossfader on arrow keys (waitKeyEx returns full codes)
+        # macOS: 63234/63235/63233; Linux: 65361/65363/65364
+        if key in (63234, 65361):  # ←
+            self.crossfader.value = max(0.0, self.crossfader.value - self.KEY_CROSSFADER_STEP)
+            self.audio_engine.set_crossfader_position(self.crossfader.value)
+            return False
+        if key in (63235, 65363):  # →
+            self.crossfader.value = min(1.0, self.crossfader.value + self.KEY_CROSSFADER_STEP)
+            self.audio_engine.set_crossfader_position(self.crossfader.value)
+            return False
+        if key in (63233, 65364):  # ↓ (center)
+            self.crossfader.value = 0.5
+            self.audio_engine.set_crossfader_position(0.5)
+            return False
+
+        # Per-deck keys: (deck, action)
+        per_deck = {
+            ord('q'): (1, 'cue'),       ord('p'): (2, 'cue'),
+            ord('a'): (1, 'play'),      ord(';'): (2, 'play'),
+            ord('w'): (1, 'vocal'),     ord('o'): (2, 'vocal'),
+            ord('e'): (1, 'instr'),     ord('i'): (2, 'instr'),
+            ord('r'): (1, 'tempo+'),    ord('u'): (2, 'tempo+'),
+            ord('g'): (1, 'tempo-'),    ord('j'): (2, 'tempo-'),
+            ord('d'): (1, 'seek+'),     ord('l'): (2, 'seek+'),
+            ord('s'): (1, 'seek-'),     ord('k'): (2, 'seek-'),
+            ord('1'): (1, 'vol+'),      ord('9'): (2, 'vol+'),
+            ord('2'): (1, 'vol-'),      ord('0'): (2, 'vol-'),
+            ord('Q'): (1, 'set_cue'),   ord('P'): (2, 'set_cue'),
+        }
+        if key not in per_deck:
+            return False
+
+        deck, action = per_deck[key]
+        buttons = self.deck1_buttons if deck == 1 else self.deck2_buttons
+        vol_fader = self.volume_fader_1 if deck == 1 else self.volume_fader_2
+        tempo_fader = self.tempo_fader_1 if deck == 1 else self.tempo_fader_2
+
+        if action == 'cue':
+            # Reuse the same handler gestures call so visual state stays consistent.
+            self.handle_button_interaction(buttons['cue'], deck)
+        elif action == 'play':
+            self.handle_button_interaction(buttons['play_pause'], deck)
+        elif action == 'vocal':
+            self.handle_button_interaction(buttons['vocal'], deck)
+        elif action == 'instr':
+            self.handle_button_interaction(buttons['instrumental'], deck)
+        elif action in ('tempo+', 'tempo-'):
+            delta = self.KEY_TEMPO_STEP if action == 'tempo+' else -self.KEY_TEMPO_STEP
+            tempo_fader.value = max(0.0, min(1.0, tempo_fader.value + delta))
+            self.audio_engine.set_tempo(deck, tempo_fader.value)
+        elif action in ('seek+', 'seek-'):
+            delta = self.KEY_SEEK_SECONDS if action == 'seek+' else -self.KEY_SEEK_SECONDS
+            self.audio_engine.nudge_track_position(deck, delta)
+        elif action in ('vol+', 'vol-'):
+            delta = self.KEY_VOLUME_STEP if action == 'vol+' else -self.KEY_VOLUME_STEP
+            vol_fader.value = max(0.0, min(1.0, vol_fader.value + delta))
+            self.audio_engine.set_master_volume(deck, vol_fader.value)
+        elif action == 'set_cue':
+            info = self.audio_engine.get_deck_info(deck)
+            pos = info.get('position', 0.0) if isinstance(info, dict) else 0.0
+            self.audio_engine.set_cue_point(deck, pos)
+            print(f"Deck {deck}: cue point set at {pos:.2f}s")
+
+        return False
+
     def process_hand_interactions(self, pinch_data, jog_pinch_data):
         """Enhanced multi-touch system - supports simultaneous interactions with multiple controls"""
         # Store previous button states
@@ -3196,6 +3293,44 @@ class DJController:
                      (expanded_x + expanded_width, expanded_y + expanded_height), 
                      feedback_color, 1)
     
+    def _draw_keymap_overlay(self, frame):
+        """Render an in-app keyboard cheat sheet. Toggled by `/` (or `?`)."""
+        if not getattr(self, 'show_keymap', False):
+            return frame
+        rows = [
+            ("Action", "Deck 1", "Deck 2"),
+            ("Cue", "Q", "P"),
+            ("Play/Pause", "A", ";"),
+            ("Vocal toggle", "W", "O"),
+            ("Instrumental toggle", "E", "I"),
+            ("Tempo + / -", "R / G", "U / J"),
+            ("Seek - / + (back/fwd)", "S / D", "K / L"),
+            ("Master vol + / -", "1 / 2", "9 / 0"),
+            ("Set cue point", "Shift+Q", "Shift+P"),
+            ("", "", ""),
+            ("Crossfader", "← → ↓ (center)", ""),
+            ("Toggle this help", "/", ""),
+            ("Quit", "Esc", ""),
+        ]
+        pad = 14
+        line_h = 26
+        col_w = (260, 200, 200)
+        w = sum(col_w) + pad * 2
+        h = pad * 2 + line_h * len(rows)
+        x0 = max(20, (frame.shape[1] - w) // 2)
+        y0 = max(20, (frame.shape[0] - h) // 2)
+        bg = frame.copy()
+        cv2.rectangle(bg, (x0, y0), (x0 + w, y0 + h), (20, 20, 20), -1)
+        cv2.addWeighted(bg, 0.85, frame, 0.15, 0, frame)
+        cv2.rectangle(frame, (x0, y0), (x0 + w, y0 + h), (200, 200, 200), 1)
+        for i, (a, d1, d2) in enumerate(rows):
+            color = (255, 220, 100) if i == 0 else (240, 240, 240)
+            y = y0 + pad + line_h * (i + 1) - 8
+            cv2.putText(frame, a, (x0 + pad, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
+            cv2.putText(frame, d1, (x0 + pad + col_w[0], y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
+            cv2.putText(frame, d2, (x0 + pad + col_w[0] + col_w[1], y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
+        return frame
+
     def draw_controller_overlay(self, frame):
         """Draw the DJ controller overlay on the frame"""
         overlay = frame.copy()
@@ -3911,6 +4046,7 @@ class DJController:
                 
                 # Draw controller overlay
                 frame = self.draw_controller_overlay(frame)
+                frame = self._draw_keymap_overlay(frame)
                 
                 # Draw fingertip landmarks and distance lines
                 self.draw_fingertip_landmarks(frame, results)
@@ -4036,21 +4172,12 @@ class DJController:
                           f"{stats['frame_time_ms']:.1f}ms frame time, "
                           f"Processing: {frame_processing_time*1000:.1f}ms")
                 
-                # Handle key presses with frame-synchronized timing
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
+                # Handle key presses (waitKeyEx preserves arrow-key codes).
+                # All key handling lives in _handle_keyboard so gestures and keys
+                # share the same AudioEngine adapter layer.
+                key = cv2.waitKeyEx(1)
+                if self._handle_keyboard(key):
                     break
-                elif key == ord('f'):  # Press 'f' to show FPS debug info
-                    if hasattr(self, 'performance_monitor') and self.performance_monitor:
-                        stats = self.performance_monitor.get_performance_stats()
-                        print(f"🎬 FPS Debug: Target={self.target_fps:.1f}, "
-                              f"Actual={self.actual_fps:.1f}, "
-                              f"Avg={stats['avg_fps']:.1f}, "
-                              f"Range={stats['min_fps']:.1f}-{stats['max_fps']:.1f}")
-                    else:
-                        print(f"🎬 FPS Debug: Target={self.target_fps:.1f}, Actual={self.actual_fps:.1f}")
-                elif key == ord('s'):  # Press 's' to show smooth animation status
-                    print(f"✨ Animation Status: Jog wheels, album art, and UI synchronized to {self.target_fps}fps")
                     
         except KeyboardInterrupt:
             print("\nShutting down...")
