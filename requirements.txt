@@ -9,9 +9,10 @@ scipy>=1.9.0,<2.0.0
 # Audio engine (cross-platform)
 pyo>=1.0.0,<2.0.0
 
-# TensorFlow (MediaPipe dependency - platform-specific)
-tensorflow>=2.9.0,<3.0.0; platform_system != "Darwin" or platform_machine != "arm64"
-tensorflow-macos>=2.9.0,<3.0.0; platform_system == "Darwin" and platform_machine == "arm64"
+# TensorFlow (MediaPipe dependency)
+# The unified `tensorflow` package supports macOS arm64 natively since 2.16;
+# the legacy `tensorflow-macos` package is deprecated and unmaintained.
+tensorflow>=2.16.0,<3.0.0
 
 # Windows audio support (optional)
 pyaudio>=0.2.11; platform_system == "Windows"
